@@ -1,0 +1,12 @@
+{application, ecredis, [
+    {description, "Erlang Cluster Redis"},
+    {vsn, "0.1.0"},
+    {modules, []},
+    {registered, []},
+    {applications, [
+        kernel,
+        stdlib
+    ]},
+    {mod, {ecredis, []}},
+    {env, []}
+]}.

@@ -1,15 +1,18 @@
 -module(ecredis_hasher).
 
 %% API.
--export([hash/1]).
+-export([hash/1, old_hash/1]).
 
 -include("ecredis.hrl").
 
-%% TODO(vipin): Explore nif implementation. Ref: https://github.com/building39/crc16_nif
 
 %% API.
 -spec hash(string()) -> integer().
 hash(Key) ->
+    ecredis_crc16:crc16(Key) rem ?REDIS_CLUSTER_HASH_SLOTS.
+
+-spec old_hash(string()) -> integer().
+old_hash(Key) ->
     crc16(Key) rem ?REDIS_CLUSTER_HASH_SLOTS.
 
 -spec crc16(string()) -> integer().

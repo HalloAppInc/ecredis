@@ -17,6 +17,7 @@
 
 -spec start_link({ClusterName :: atom(), InitNodes :: [{}]}) -> {ok, pid()}.
 start_link({ClusterName, InitNodes}) ->
+    error_logger:info_msg("starting ~p", [ClusterName]),
     gen_server:start_link({local, ClusterName}, ?ECREDIS_SERVER, [ClusterName, InitNodes], []).
 
 
@@ -65,6 +66,7 @@ execute_query(ClusterName, Pid, Command, Slot, Version, Counter) ->
         % If we detect a node went down, we should probably refresh the slot
         % mapping.
         {error, no_connection} ->
+            error_logger:warning_msg("no_connection, ~p v: ~p", [ClusterName, Version]),
             {ok, _} = ecredis_server:remap_cluster(ClusterName, Version),
             execute_slot_query(ClusterName, Command, Slot, Counter + 1);
 
@@ -73,10 +75,12 @@ execute_query(ClusterName, Pid, Command, Slot, Version, Counter) ->
         % the next request. We don't need to refresh the slot mapping in this
         % case.
         {error, tcp_closed} ->
+            error_logger:warning_msg("tcp_closed, ~p v: ~p", [ClusterName, Version]),
             execute_query(ClusterName, Pid, Command, Slot, Version, Counter + 1);
 
         % Redis explicitly say our slot mapping is incorrect, we need to refresh it.
         {error, <<"MOVED ", _/binary>>} ->
+            error_logger:warning_msg("moved, ~p v: ~p", [ClusterName, Version]),
             {ok, _} = ecredis_server:remap_cluster(ClusterName, Version),
             execute_slot_query(ClusterName, Command, Slot, Counter + 1);
 

@@ -37,7 +37,7 @@ get_eredis_pid(ClusterName, Slot) ->
     end. 
 
 
--spec remap_cluster(ClusterName :: atom(), Version :: integer()) -> {Version :: integer()}.
+-spec remap_cluster(ClusterName :: atom(), Version :: integer()) -> {ok, Version :: integer()}.
 remap_cluster(ClusterName, Version) ->
     gen_server:call(ClusterName, {remap_cluster, Version}).
 
@@ -239,7 +239,7 @@ init([ClusterName, InitNodes]) ->
 
 handle_call({remap_cluster, Version}, _From, State) ->
     NewState = remap_cluster_internal(State, Version),
-    {reply, NewState#state.version, NewState};
+    {reply, {ok, NewState#state.version}, NewState};
 handle_call(_Request, _From, State) ->
     {reply, ignored, State}.
 

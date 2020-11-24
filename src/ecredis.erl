@@ -25,6 +25,7 @@ start_link({ClusterName, InitNodes}) ->
 -spec qp(ClusterName :: atom(), Commands :: redis_pipeline_command()) -> redis_pipeline_result().
 qp(ClusterName, Commands) ->
     query(ClusterName, Commands).
+%% TODO(murali@): ensure that these commands contain keys from same slot, else return an error.
 
 
 %% Executes q.
@@ -80,6 +81,14 @@ execute_query(ClusterName, Pid, Command, Slot, Version, Counter) ->
 
         % Redis explicitly say our slot mapping is incorrect, we need to refresh it.
         {error, <<"MOVED ", _/binary>>} ->
+            error_logger:warning_msg("moved, ~p v: ~p", [ClusterName, Version]),
+            {ok, _} = ecredis_server:remap_cluster(ClusterName, Version),
+            execute_slot_query(ClusterName, Command, Slot, Counter + 1);
+
+        %% When querying multiple commands, result will be an array.
+        %% All of them must belong to the same slot.
+        %% Check for errors if slot mapping is incorrect, we need to refresh and remap them.
+        [{error, <<"MOVED ", _/binary>>} | _] ->
             error_logger:warning_msg("moved, ~p v: ~p", [ClusterName, Version]),
             {ok, _} = ecredis_server:remap_cluster(ClusterName, Version),
             execute_slot_query(ClusterName, Command, Slot, Counter + 1);

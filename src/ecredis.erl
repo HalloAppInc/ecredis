@@ -86,7 +86,6 @@ execute_query(ClusterName, Pid, Command, Slot, Version, Counter) ->
             execute_slot_query(ClusterName, Command, Slot, Counter + 1);
 
         %% When querying multiple commands, result will be an array.
-        %% All of them must belong to the same slot.
         %% Check for errors if slot mapping is incorrect, we need to refresh and remap them.
         [{error, <<"MOVED ", _/binary>>} | _] ->
             error_logger:warning_msg("moved, ~p v: ~p", [ClusterName, Version]),

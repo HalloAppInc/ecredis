@@ -3,7 +3,8 @@
 %% API.
 -export([
     get_key_from_command/1,
-    get_key_slot/1
+    get_key_slot/1,
+    check_sanity_of_keys/1
 ]).
 
 -include("ecredis.hrl").
@@ -104,14 +105,14 @@ hashed_key(Key) ->
 
 
 -spec check_sanity_of_keys(redis_command()) -> ok | error.
-check_sanity_of_keys([[X|Y]|Z] = Commands) ->  
+check_sanity_of_keys([[_X|_Y]|_Z] = Commands) ->
     AllKeys = lists:foldl(fun get_key_from_command/1, [], Commands),
     validate_keys(AllKeys);
 check_sanity_of_keys([Term1, Term2|Rest]) when is_binary(Term1) ->
     check_sanity_of_keys([binary_to_list(Term1), Term2|Rest]);
-get_key_from_command([Term1, Term2|Rest]) when is_binary(Term2) ->
+check_sanity_of_keys([Term1, Term2|Rest]) when is_binary(Term2) ->
     check_sanity_of_keys([Term1, binary_to_list(Term2)|Rest]);
-check_sanity_of_keys([Term1, Term2|Rest]) ->
+check_sanity_of_keys([Term1, _Term2|Rest]) ->
     AllKeys = case string:to_lower(Term1) of
         "eval" ->
             get_keys_from_rest(Rest);
@@ -127,10 +128,13 @@ check_sanity_of_keys([Term1, Term2|Rest]) ->
 get_keys_from_rest([KeyNum | Rest]) when is_integer(KeyNum) ->
     Keys = lists:sublist(Rest, KeyNum),
     lists:map(
-        fun(Key) when is_binary(Key) -> binary_to_list(Key),
-            (Key) when is_list(Key) -> Key
+        fun(Key) ->
+            case is_binary(Key) of
+                true -> binary_to_list(Key);
+                false -> Key
+            end
         end, Keys);
-get_key_from_rest(_) ->
+get_keys_from_rest(_) ->
     undefined.
 
 

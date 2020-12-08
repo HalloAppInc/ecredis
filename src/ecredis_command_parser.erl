@@ -103,3 +103,48 @@ hashed_key(Key) ->
     end.
 
 
+-spec check_sanity_of_keys(redis_command()) -> ok | error.
+check_sanity_of_keys([[X|Y]|Z] = Commands) ->  
+    AllKeys = lists:foldl(fun get_key_from_command/1, [], Commands),
+    validate_keys(AllKeys);
+check_sanity_of_keys([Term1, Term2|Rest]) when is_binary(Term1) ->
+    check_sanity_of_keys([binary_to_list(Term1), Term2|Rest]);
+get_key_from_command([Term1, Term2|Rest]) when is_binary(Term2) ->
+    check_sanity_of_keys([Term1, binary_to_list(Term2)|Rest]);
+check_sanity_of_keys([Term1, Term2|Rest]) ->
+    AllKeys = case string:to_lower(Term1) of
+        "eval" ->
+            get_keys_from_rest(Rest);
+        "evalsha" ->
+            get_keys_from_rest(Rest);
+        _ ->
+            ok
+    end,
+    validate_keys(AllKeys).
+
+
+-spec get_keys_from_rest([anystring()]) -> [string()].
+get_keys_from_rest([KeyNum | Rest]) when is_integer(KeyNum) ->
+    Keys = lists:sublist(Rest, KeyNum),
+    lists:map(
+        fun(Key) when is_binary(Key) -> binary_to_list(Key),
+            (Key) when is_list(Key) -> Key
+        end, Keys);
+get_key_from_rest(_) ->
+    undefined.
+
+
+-spec validate_keys([any()]) -> ok | error.
+validate_keys(AllKeys) ->
+    ValidKeys = lists:filter(fun(Key) -> Key =/= undefined end, AllKeys),
+    case ValidKeys of
+        []-> ok;
+        _ ->
+            ValidKeysSlots = lists:map(fun get_key_slot/1, ValidKeys),
+            [Slot1 | _] = ValidKeysSlots,
+            case lists:all(fun(Slot) -> Slot =:= Slot1 end, ValidKeysSlots) of
+                true -> ok;
+                false -> error
+            end
+    end.
+

@@ -84,15 +84,23 @@ execute_query(ClusterName, Pid, Command, Slot, Version, Counter) ->
             {ok, _} = ecredis_server:remap_cluster(ClusterName, Version),
             execute_slot_query(ClusterName, Command, Slot, Counter + 1);
 
-        %% When querying multiple commands, result will be an array.
-        %% Check for errors if slot mapping is incorrect, we need to refresh and remap them.
-        [{error, <<"MOVED ", _/binary>>} | _] ->
-            error_logger:warning_msg("moved, ~p v: ~p", [ClusterName, Version]),
-            {ok, _} = ecredis_server:remap_cluster(ClusterName, Version),
-            execute_slot_query(ClusterName, Command, Slot, Counter + 1);
-
         Result ->
-            Result
+            %% When querying multiple commands, result will be an array.
+            %% Check for errors if slot mapping is incorrect, we need to refresh and remap them.
+            case check_for_moved_errors(Result) of
+                true ->
+                    case ecredis_command_parser:check_sanity_of_keys(Command) of
+                        ok ->
+                            %% TODO(murali@): execute only queries that failed.
+                            error_logger:warning_msg("moved, ~p v: ~p", [ClusterName, Version]),
+                            {ok, _} = ecredis_server:remap_cluster(ClusterName, Version),
+                            execute_slot_query(ClusterName, Command, Slot, Counter + 1);
+                        error ->
+                            Result
+                    end;
+                false ->
+                    Result
+            end
     end.
 
 
@@ -106,4 +114,11 @@ eredis_query(Pid, Command) ->
 throttle_retries(0) -> ok;
 throttle_retries(_) -> timer:sleep(?REDIS_RETRY_DELAY).
 
+
+check_for_moved_errors([{error, <<"MOVED ", _/binary>>} | _Rest]) ->
+    true;
+check_for_moved_errors([_ | Rest]) ->
+    check_for_moved_errors(Rest);
+check_for_moved_errors(_) ->
+    false.
 

@@ -96,7 +96,7 @@ execute_query(ClusterName, Pid, Command, Slot, Version, Counter) ->
                             {ok, _} = ecredis_server:remap_cluster(ClusterName, Version),
                             execute_slot_query(ClusterName, Command, Slot, Counter + 1);
                         error ->
-                            error_logger:warning_msg("moved, ~p v: ~p, invalid_keys in command: ~p",
+                            error_logger:error_msg("clustername, ~p v: ~p, invalid_keys in command: ~p",
                                     [ClusterName, Version, Command]),
                             Result
                     end;

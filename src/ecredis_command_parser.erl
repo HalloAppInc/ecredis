@@ -105,14 +105,14 @@ hashed_key(Key) ->
 
 
 -spec check_sanity_of_keys(redis_command()) -> ok | error.
-check_sanity_of_keys([[_X|_Y]|_Z] = Commands) ->
+check_sanity_of_keys([[ _X | _Y] | _Z] = Commands) ->
     AllKeys = lists:foldl(fun get_key_from_command/1, [], Commands),
     validate_keys(AllKeys);
-check_sanity_of_keys([Term1, Term2|Rest]) when is_binary(Term1) ->
-    check_sanity_of_keys([binary_to_list(Term1), Term2|Rest]);
-check_sanity_of_keys([Term1, Term2|Rest]) when is_binary(Term2) ->
-    check_sanity_of_keys([Term1, binary_to_list(Term2)|Rest]);
-check_sanity_of_keys([Term1, _Term2|Rest]) ->
+check_sanity_of_keys([Term1, Term2 | Rest]) when is_binary(Term1) ->
+    check_sanity_of_keys([binary_to_list(Term1), Term2 | Rest]);
+check_sanity_of_keys([Term1, Term2 | Rest]) when is_binary(Term2) ->
+    check_sanity_of_keys([Term1, binary_to_list(Term2) | Rest]);
+check_sanity_of_keys([Term1, _Term2 | Rest]) ->
     AllKeys = case string:to_lower(Term1) of
         "eval" ->
             get_keys_from_rest(Rest);
@@ -125,8 +125,8 @@ check_sanity_of_keys([Term1, _Term2|Rest]) ->
 
 
 -spec get_keys_from_rest([anystring()]) -> [string()].
-get_keys_from_rest([KeyNum | Rest]) when is_integer(KeyNum) ->
-    Keys = lists:sublist(Rest, KeyNum),
+get_keys_from_rest([NumKeys | Rest]) when is_integer(NumKeys) ->
+    Keys = lists:sublist(Rest, NumKeys),
     lists:map(
         fun(Key) ->
             case is_binary(Key) of

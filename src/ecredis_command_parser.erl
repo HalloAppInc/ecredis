@@ -105,7 +105,7 @@ hashed_key(Key) ->
 
 
 -spec check_sanity_of_keys(redis_command()) -> ok | error.
-check_sanity_of_keys([[X | _Y] | _Z]) when is_binary(X) ->
+check_sanity_of_keys([[X | Y] | Z]) when is_binary(X) ->
     check_sanity_of_keys([[binary_to_list(X)|Y]|Z]);
 check_sanity_of_keys([[X | _Y] | _Z] = Commands) when is_list(X) ->
     AllKeys = lists:foldl(fun get_key_from_command/1, [], Commands),

@@ -80,8 +80,8 @@ execute_query(ClusterName, Pid, Command, Slot, Version, Counter) ->
             execute_query(ClusterName, Pid, Command, Slot, Version, Counter + 1);
 
         % Redis explicitly say our slot mapping is incorrect, we need to refresh it.
-        {error, <<"MOVED ", _/binary>>} ->
-            error_logger:warning_msg("moved, ~p v: ~p", [ClusterName, Version]),
+        {error, <<"MOVED ", Res/binary>>} ->
+            error_logger:warning_msg("moved, ~p v: ~p, Pid: ~p, Command: ~p, Slot: ~p, result: ~p", [ClusterName, Version, Pid, Command, Slot, Res]),
             {ok, _} = ecredis_server:remap_cluster(ClusterName, Version),
             execute_slot_query(ClusterName, Command, Slot, Counter + 1);
 

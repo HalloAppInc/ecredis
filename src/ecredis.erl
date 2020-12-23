@@ -17,7 +17,6 @@
 
 -spec start_link({ClusterName :: atom(), InitNodes :: [{}]}) -> {ok, pid()}.
 start_link({ClusterName, InitNodes}) ->
-    error_logger:info_msg("starting ~p", [ClusterName]),
     gen_server:start_link({local, ClusterName}, ?ECREDIS_SERVER, [ClusterName, InitNodes], []).
 
 

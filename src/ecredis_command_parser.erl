@@ -108,7 +108,7 @@ hashed_key(Key) ->
 check_sanity_of_keys([[X | Y] | Z]) when is_binary(X) ->
     check_sanity_of_keys([[binary_to_list(X)|Y]|Z]);
 check_sanity_of_keys([[X | _Y] | _Z] = Commands) when is_list(X) ->
-    AllKeys = lists:foldl(fun get_key_from_command/1, [], Commands),
+    AllKeys = lists:map(fun get_key_from_command/1, Commands),
     validate_keys(AllKeys);
 check_sanity_of_keys([Term1, Term2 | Rest]) when is_binary(Term1) ->
     check_sanity_of_keys([binary_to_list(Term1), Term2 | Rest]);
@@ -121,7 +121,7 @@ check_sanity_of_keys([Term1, _Term2 | Rest]) ->
         "evalsha" ->
             get_keys_from_rest(Rest);
         _ ->
-            ok
+            [undefined]
     end,
     validate_keys(AllKeys).
 

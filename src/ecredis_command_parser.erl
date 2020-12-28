@@ -144,7 +144,7 @@ get_keys_from_rest(_) ->
 validate_keys(AllKeys) ->
     ValidKeys = lists:filter(fun(Key) -> Key =/= undefined end, AllKeys),
     case ValidKeys of
-        []-> ok;
+        [] -> ok;
         _ ->
             ValidKeysSlots = lists:map(fun get_key_slot/1, ValidKeys),
             [Slot1 | _] = ValidKeysSlots,

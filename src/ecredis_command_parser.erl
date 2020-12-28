@@ -3,7 +3,8 @@
 %% API.
 -export([
     get_key_from_command/1,
-    get_key_slot/1
+    get_key_slot/1,
+    check_sanity_of_keys/1
 ]).
 
 -include("ecredis.hrl").
@@ -102,4 +103,54 @@ hashed_key(Key) ->
             end
     end.
 
+
+-spec check_sanity_of_keys(redis_command()) -> ok | error.
+check_sanity_of_keys([[X | Y] | Z]) when is_binary(X) ->
+    check_sanity_of_keys([[binary_to_list(X)|Y]|Z]);
+check_sanity_of_keys([[X | _Y] | _Z] = Commands) when is_list(X) ->
+    AllKeys = lists:map(fun get_key_from_command/1, Commands),
+    validate_keys(AllKeys);
+check_sanity_of_keys([Term1, Term2 | Rest]) when is_binary(Term1) ->
+    check_sanity_of_keys([binary_to_list(Term1), Term2 | Rest]);
+check_sanity_of_keys([Term1, Term2 | Rest]) when is_binary(Term2) ->
+    check_sanity_of_keys([Term1, binary_to_list(Term2) | Rest]);
+check_sanity_of_keys([Term1, _Term2 | Rest]) ->
+    AllKeys = case string:to_lower(Term1) of
+        "eval" ->
+            get_keys_from_rest(Rest);
+        "evalsha" ->
+            get_keys_from_rest(Rest);
+        _ ->
+            [undefined]
+    end,
+    validate_keys(AllKeys).
+
+
+-spec get_keys_from_rest([anystring()]) -> [string()].
+get_keys_from_rest([NumKeys | Rest]) when is_integer(NumKeys) ->
+    Keys = lists:sublist(Rest, NumKeys),
+    lists:map(
+        fun(Key) ->
+            case is_binary(Key) of
+                true -> binary_to_list(Key);
+                false -> Key
+            end
+        end, Keys);
+get_keys_from_rest(_) ->
+    undefined.
+
+
+-spec validate_keys([any()]) -> ok | error.
+validate_keys(AllKeys) ->
+    ValidKeys = lists:filter(fun(Key) -> Key =/= undefined end, AllKeys),
+    case ValidKeys of
+        [] -> ok;
+        _ ->
+            ValidKeysSlots = lists:map(fun get_key_slot/1, ValidKeys),
+            [Slot1 | _] = ValidKeysSlots,
+            case lists:all(fun(Slot) -> Slot =:= Slot1 end, ValidKeysSlots) of
+                true -> ok;
+                false -> error
+            end
+    end.
 

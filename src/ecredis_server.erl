@@ -66,6 +66,7 @@ connect_all_nodes(State, InitNodes) ->
 
 
 %% TODO(vipin): Need to reset connection on Redis node removal.
+%% TODO(@ethan): Close connections to unused nodes after mapping is refreshed
 -spec reload_slots_map(State :: #state{}) -> State :: #state{}.
 reload_slots_map(State) ->
     ClusterSlots = get_cluster_slots(State#state.cluster_name, State#state.init_nodes),

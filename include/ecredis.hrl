@@ -26,6 +26,19 @@
     node :: #node{}
 }).
 
+-record(query, {
+    query_type :: atom(), % type of query
+    cluster_name :: atom(), % name of the cluster
+    version :: integer(), % the version of the client-side slots/nodes mapping
+    command :: redis_command(), % the command to send
+    slot :: integer(), % the slot of the command
+    pid :: pid(), % pid of the node to send query to
+    response :: redis_result(), % response from redis
+    retries :: integer(), % number of retries for a given query
+    indices :: [integer()] % indices of commands, used to merge retried 
+                           % commands back into the successes
+}).
+
 -define(REDIS_CLUSTER_HASH_SLOTS, 16384).
 -define(OL_TRANSACTION_TTL, 16).
 -define(REDIS_CLUSTER_REQUEST_TTL, 16).
@@ -95,3 +108,4 @@
 16#af,16#9b,16#bf,16#ba,16#8f,16#d9,16#9f,16#f8,
 16#6e,16#17,16#7e,16#36,16#4e,16#55,16#5e,16#74,
 16#2e,16#93,16#3e,16#b2,16#0e,16#d1,16#1e,16#f0>>).
+

@@ -7,7 +7,8 @@
 
 %% API.
 -export([
-    get_eredis_pid/2,
+    get_eredis_pid_by_slot/2,
+    lookup_eredis_pid/2,
     remap_cluster/2
 ]). 
 
@@ -27,9 +28,9 @@
 % API
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 
--spec get_eredis_pid(ClusterName :: atom(), Slot :: integer()) -> 
+-spec get_eredis_pid_by_slot(ClusterName :: atom(), Slot :: integer()) -> 
     {Pid :: pid(), Version :: integer()} | undefined.
-get_eredis_pid(ClusterName, Slot) ->
+get_eredis_pid_by_slot(ClusterName, Slot) ->
     Result = ets:lookup(ets_table_name(ClusterName, ?SLOT_PIDS), Slot),
     case Result of
         [] -> undefined;
@@ -254,5 +255,4 @@ terminate(_Reason, _State) ->
 
 code_change(_OldVsn, State, _Extra) ->
     {ok, State}.
-
 

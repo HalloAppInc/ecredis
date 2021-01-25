@@ -67,7 +67,7 @@ q(ClusterName, Command) ->
 query_by_command(#query{command = Command} = Query) ->
     case ecredis_command_parser:get_key_from_command(Command) of
         undefined ->
-            ecredis_logger:log_error("Unable to execute - invalid cluster key~n", Query),
+            ecredis_logger:log_error("Unable to execute - invalid cluster key", Query),
             {error, {invalid_cluster_key, Command}};
         Key ->
             Slot = ecredis_command_parser:get_key_slot(Key),
@@ -89,7 +89,7 @@ query_by_slot(#query{retries = Retries} = Query) when Retries >= ?REDIS_CLUSTER_
     ecredis_logger:log_error("Max retries reached", Query),
     Query;
 query_by_slot(#query{command = Command, retries = Retries} = Query) ->
-    NewQuery = case get_pid_and_map_version(Query) of
+    case get_pid_and_map_version(Query) of
         undefined ->
             ecredis_logger:log_error("Unable to execute - slot has no connection", Query),
             % Slot was not mapped to any pid - remap the cluster and try again 
@@ -99,9 +99,8 @@ query_by_slot(#query{command = Command, retries = Retries} = Query) ->
                 retries = Retries + 1
             });
         {Pid, Version} ->
-            Query#query{pid = Pid, version = Version}
-    end,
-    execute_query(NewQuery).
+            execute_query(Query#query{pid = Pid, version = Version})
+    end.
 
 
 %% @doc Execute the given query. Separate out the successful commands and retry
@@ -119,7 +118,7 @@ execute_query(#query{command = Command, retries = Retries, pid = Pid} = Query) -
             % All commands were successful - return the query as is
             NewQuery;
         {Successes, QueriesToResend} ->
-            check_sanity_if_qp(Query),
+            check_sanity_if_qp(NewQuery),
             % Reexecute all queries that failed
             NewSuccesses = [execute_query(Q) || Q <- QueriesToResend],
             % Remove any (ASKING, <<"OK">>) command/response pairs that are
@@ -130,6 +129,7 @@ execute_query(#query{command = Command, retries = Retries, pid = Pid} = Query) -
             % Update the query config with the full, ordered set of responses
             Query#query{indices = Indices, response = Responses}
     end.
+
 
 %% @doc Separates successful commands form those that need to be retried. If the
 %% command got a redirect error, make a new query config with the updated pid
@@ -186,7 +186,6 @@ get_successes_and_retries(#query{
         command = Commands,
         response = Responses,
         indices = Indices} = Query) when is_list(Responses) ->
-    % TODO group queries by destination to save trips to redis
     % Check each command in a pipeline individually for errors, then aggregate
     % the lists of successes and retries
     IndexCommandResponseList = lists:zip3(Indices, Commands, Responses),
@@ -196,7 +195,35 @@ get_successes_and_retries(#query{
         response = Response,
         indices = [Index]} || {Index, Command, Response} <- IndexCommandResponseList],
     {Successes, NeedToRetries} = lists:unzip([get_successes_and_retries(Q) || Q <- PossibleRetries]),
-    {lists:flatten(Successes), lists:flatten(NeedToRetries)}.
+    {lists:flatten(Successes), group_by_destination(lists:flatten(NeedToRetries))}.
+
+
+%% @doc Merge a list of queries into a list of queries where each destination is
+%% unique. If two queries in the original list have the same destination, they become
+%% a pipeline command, where order is preserved based on the querys' indices
+group_by_destination(Queries) ->
+    maps:values(lists:foldr(fun add_to_map/2, maps:new(), Queries)).
+
+
+%% @doc Add a query to a map. If a query to the same destination already exists,
+%% add add the command, response, and index to the query.  
+-spec add_to_map(#query{}, map()) -> map().
+add_to_map(#query{command = Command, response = Response, pid = Pid, indices = [Index]} = Query, Map) ->
+    case maps:get(Pid, Map, undefined) of
+        #query{command = Commands, response = Responses, indices = Indices} ->
+            NewQuery = Query#query{
+                command = [Command | Commands],
+                response = [Response | Responses],
+                indices = [Index | Indices]
+            },
+            maps:update(Pid, NewQuery, Map);
+        undefined ->
+            NewQuery = Query#query{
+                command = [Command],
+                response = [Response]
+            },
+            maps:put(Pid, NewQuery, Map)
+    end.
 
 
 %% @doc Send the command to the given redis node 

@@ -97,6 +97,11 @@ pipeline(ClusterName) ->
                     ecredis:qp(ClusterName, [["SET", "a1", "aaa"],
                                              ["SET", "a2", "aaa"],
                                              ["SET", "a3", "aaa"]])),
+    % The two last queries will be sent again in a pipeline to the new destination
+    ?assertMatch([{ok, <<"OK">>},{ok, <<"OK">>},{ok, <<"aaa">>}],
+                    ecredis:qp(ClusterName, [["SET", "a1", "aaa"],
+                                             ["SET", "a2", "aaa"],
+                                             ["GET", "a2"]])),
     ?assertMatch([{ok, _},{ok, _},{ok, _}],
                  ecredis:qp(ClusterName, [["LPUSH", "a", "aaa"],
                                           ["LPUSH", "a", "bbb"],

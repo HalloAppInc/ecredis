@@ -10,7 +10,11 @@
 ]).
 
 -ifdef(TEST).
--export([query_by_slot/1]).
+-export([
+    query_by_slot/1,
+    execute_query/1,
+    get_successes_and_retries/1
+]).
 -endif.
 
 -include("ecredis.hrl").

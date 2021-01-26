@@ -23,6 +23,45 @@ get_and_set_b() ->
     get_and_set(ecredis_b).
 
 
+
+
+test_redirect_keeps_pipeline(ClusterName) ->
+    % assert that key and key2 hash to different nodes
+    ?assertNotEqual(
+        ecredis_server:get_eredis_pid_by_slot(ClusterName, ecredis_command_parser:get_key_slot("key1")),
+        ecredis_server:get_eredis_pid_by_slot(ClusterName, ecredis_command_parser:get_key_slot("key2"))
+    ),
+
+    Slot1 = ecredis_command_parser:get_key_slot("key1"),
+    {Pid1, Version1} = ecredis_server:get_eredis_pid_by_slot(ClusterName, Slot1),
+    
+    Query = #query{
+        query_type = qp,
+        cluster_name = ClusterName,
+        command = [["SET", "key1", "value1"], ["GET", "key1"], ["SET", "key2", "value2"], ["GET", "key2"]],
+        % last two queries have the same destination, so they should be
+        % pipelined when redirected
+        response = [{ok, <<"OK">>}, {ok, <<"value1">>}, {error,<<"MOVED 4998 127.0.0.1:30001">>}, {error,<<"MOVED 4998 127.0.0.1:30001">>}],
+        slot = Slot1,
+        pid = Pid1,
+        version = Version1,
+        retries = 0,
+        indices = [1, 2, 3, 4]
+    },
+
+    % assert that there's only one query to be re-executed, and that it's a
+    % pipeline with the correct commands in the correct order
+    ?assertMatch(
+        {_, [#query{command = [["SET","key2","value2"],["GET","key2"]]}]},
+        ecredis:get_successes_and_retries(Query)).
+
+
+test_redirect_keeps_pipeline_a() ->
+    test_redirect_keeps_pipeline(ecredis_a).
+
+
+
+
 extract_response(#query{response = Response}) ->
     Response.
 
@@ -48,7 +87,7 @@ test_asking(ClusterName) ->
     %% to the correct node. This shows that ASKING does not prevent a node from
     %% serving a slot.
     Query = #query{
-        query_type = q,
+        query_type = qp,
         cluster_name = ClusterName,
         command = [["ASKING"],["GET", "key"]],
         slot = Slot,
@@ -239,7 +278,8 @@ basic_test_() ->
           {"evalsha a", fun eval_sha_a/0},
           {"evalsha b", fun eval_sha_b/0},
           {"bitstring support a", fun bitstring_support_a/0},
-          {"bitstring support b", fun bitstring_support_b/0}
+          {"bitstring support b", fun bitstring_support_b/0},
+          {"test_redirect_keeps_pipeline", fun test_redirect_keeps_pipeline_a/0}
         ]
         }
     }.

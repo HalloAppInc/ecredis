@@ -36,7 +36,7 @@ test_redirect_keeps_pipeline(ClusterName) ->
     {Pid1, Version1} = ecredis_server:get_eredis_pid_by_slot(ClusterName, Slot1),
     
     Query = #query{
-        query_type = qp,
+        query_type = qmn,
         cluster_name = ClusterName,
         command = [["SET", "key1", "value1"], ["GET", "key1"], ["SET", "key2", "value2"], ["GET", "key2"]],
         % last two queries have the same destination, so they should be
@@ -58,8 +58,6 @@ test_redirect_keeps_pipeline(ClusterName) ->
 
 test_redirect_keeps_pipeline_a() ->
     test_redirect_keeps_pipeline(ecredis_a).
-
-
 
 
 extract_response(#query{response = Response}) ->
@@ -132,15 +130,10 @@ delete_b() ->
     delete(ecredis_b).
 
 pipeline(ClusterName) ->
-    ?assertMatch([{ok, <<"OK">>},{ok, <<"OK">>},{ok, <<"OK">>}],
+    ?assertNotMatch([{ok, _},{ok, _},{ok, _}],
                     ecredis:qp(ClusterName, [["SET", "a1", "aaa"],
                                              ["SET", "a2", "aaa"],
                                              ["SET", "a3", "aaa"]])),
-    % The two last queries will be sent again in a pipeline to the new destination
-    ?assertMatch([{ok, <<"OK">>},{ok, <<"OK">>},{ok, <<"aaa">>}],
-                    ecredis:qp(ClusterName, [["SET", "a1", "aaa"],
-                                             ["SET", "a2", "aaa"],
-                                             ["GET", "a2"]])),
     ?assertMatch([{ok, _},{ok, _},{ok, _}],
                  ecredis:qp(ClusterName, [["LPUSH", "a", "aaa"],
                                           ["LPUSH", "a", "bbb"],
@@ -158,7 +151,7 @@ pipeline_b() ->
 no_dup_after_successful_moved(ClusterName) ->
     ?assertMatch({ok, _}, ecredis:q(ClusterName, ["DEL", "key1"])),
     ?assertMatch([{ok, _}, {ok, _}],
-        ecredis:qp(ClusterName, [["INCR", "key1"],["SET", "key2", "value"]])),
+        ecredis:qmn(ClusterName, [["INCR", "key1"],["SET", "key2", "value"]])),
     ?assertMatch({ok, <<"1">>}, ecredis:q(ClusterName, ["GET", "key1"])).
 
 
@@ -172,7 +165,7 @@ no_dup_after_successful_moved_b() ->
 
 successful_moved_maintains_oredering(ClusterName) ->
     ?assertMatch([{ok, _}, {ok, _}, {ok, _}],
-        ecredis:qp(ClusterName,
+        ecredis:qmn(ClusterName,
             [["DEL", "{key}1"], ["DEL", "key2"], ["DEL", "{key}3"]] 
         )
     ),
@@ -188,7 +181,7 @@ successful_moved_maintains_oredering(ClusterName) ->
     % the first and third commands will succeed, and the second will cause a MOVED
     % error that needs to be resent. this ensures that ordering of responses is preserved
     ?assertMatch([{ok, <<"value1">>}, {ok, <<"value2">>}, {ok, <<"value3">>}],
-        ecredis:qp(ClusterName, [["GET", "{key}1"],["GET", "key2"],["GET", "{key}3"]])).
+        ecredis:qmn(ClusterName, [["GET", "{key}1"],["GET", "key2"],["GET", "{key}3"]])).
 
 successful_moved_maintains_oredering_a() ->
     successful_moved_maintains_oredering(ecredis_a).

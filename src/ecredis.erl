@@ -6,7 +6,8 @@
 -export([
     start_link/1,
     q/2,
-    qp/2
+    qp/2,
+    qmn/2
 ]).
 
 -ifdef(TEST).
@@ -28,6 +29,22 @@ start_link({ClusterName, InitNodes}) ->
     gen_server:start_link({local, ClusterName}, ?ECREDIS_SERVER, [ClusterName, InitNodes], []).
 
 
+-spec q(ClusterName :: atom(), Command :: redis_command()) -> redis_result().
+q(ClusterName, Command) ->
+    Query = #query{
+        query_type = q,
+        cluster_name = ClusterName,
+        command = Command,
+        indices = [1]
+    },
+    case query_by_command(Query) of
+        {ok, Response} ->
+            Response;
+        {error, Reason} ->
+            Reason
+    end.
+
+
 -spec qp(ClusterName :: atom(), Commands :: redis_pipeline_command()) -> redis_pipeline_result().
 qp(ClusterName, Commands) ->
     Query = #query{
@@ -44,13 +61,17 @@ qp(ClusterName, Commands) ->
     end.
 
 
--spec q(ClusterName :: atom(), Command :: redis_command()) -> redis_result().
-q(ClusterName, Command) ->
+%%% PROTOTYPE FOR NOW - this is here as a stub for test cases. It works, technically,
+%%% but is really inefficient.
+%%% 
+%%% TODO: group by destination before sending queries
+-spec qmn(ClusterName :: atom(), Commands :: redis_pipeline_command()) -> redis_pipeline_result().
+qmn(ClusterName, Commands) ->
     Query = #query{
-        query_type = q,
+        query_type = qmn,
         cluster_name = ClusterName,
-        command = Command,
-        indices = [1]
+        command = Commands,
+        indices = lists:seq(1, length(Commands))
     },
     case query_by_command(Query) of
         {ok, Response} ->
@@ -58,6 +79,7 @@ q(ClusterName, Command) ->
         {error, Reason} ->
             Reason
     end.
+
     
 
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
@@ -122,16 +144,21 @@ execute_query(#query{command = Command, retries = Retries, pid = Pid} = Query) -
             % All commands were successful - return the query as is
             NewQuery;
         {Successes, QueriesToResend} ->
-            check_sanity_if_qp(NewQuery),
-            % Reexecute all queries that failed
-            NewSuccesses = [execute_query(Q) || Q <- QueriesToResend],
-            % Remove any (ASKING, <<"OK">>) command/response pairs that are
-            % artifacts from redirection
-            NewSuccesses2 = [filter_out_asking_result(Q) || Q <- NewSuccesses],
-            % Put the original successes and new successes back in order
-            {Indices, Responses} = lists:unzip(merge_responses(NewSuccesses2 ++ Successes)),
-            % Update the query config with the full, ordered set of responses
-            Query#query{indices = Indices, response = Responses}
+            case check_sanity_of_keys(NewQuery) of
+                ok ->
+                    % Reexecute all queries that failed
+                    NewSuccesses = [execute_query(Q) || Q <- QueriesToResend],
+                    % Remove any (ASKING, <<"OK">>) command/response pairs that are
+                    % artifacts from redirection
+                    NewSuccesses2 = [filter_out_asking_result(Q) || Q <- NewSuccesses],
+                    % Put the original successes and new successes back in order
+                    {Indices, Responses} = lists:unzip(merge_responses(NewSuccesses2 ++ Successes)),
+                    % Update the query config with the full, ordered set of responses
+                    Query#query{indices = Indices, response = Responses};
+                error ->
+                    ecredis_logger:log_error("All keys in pipeline command are not mapped to the same slot", Query),
+                    NewQuery
+            end
     end.
 
 
@@ -309,16 +336,10 @@ get_pid_and_map_version(#query{cluster_name = ClusterName, slot = Slot}) ->
     ecredis_server:get_eredis_pid_by_slot(ClusterName, Slot).
 
 
--spec check_sanity_if_qp(#query{}) -> ok.
-check_sanity_if_qp(#query{query_type = qp, command = Commands} = Query) ->
-    case ecredis_command_parser:check_sanity_of_keys(Commands) of
-        ok ->
-            ok;
-        error ->
-            ecredis_logger:log_error("All keys in pipeline command are not mapped to the same slot", Query),
-            ok
-    end;
-check_sanity_if_qp(_Query) ->
+-spec check_sanity_of_keys(#query{}) -> ok | error.
+check_sanity_of_keys(#query{query_type = qp, command = Commands}) ->
+    ecredis_command_parser:check_sanity_of_keys(Commands);
+check_sanity_of_keys(_Query) ->
     ok.
 
 % check_for_moved_errors([{error, <<"MOVED ", _/binary>>} | _Rest]) ->

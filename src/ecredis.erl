@@ -151,7 +151,9 @@ execute_query(#query{command = Command, retries = Retries, pid = Pid} = Query) -
                     % Remove any (ASKING, <<"OK">>) command/response pairs that are
                     % artifacts from redirection
                     NewSuccesses2 = [filter_out_asking_result(Q) || Q <- NewSuccesses],
-                    % Put the original successes and new successes back in order
+                    % Put the original successes and new successes back in order.
+                    % The merging logic is primarily intended for qmn, as qp redirects
+                    % will always be pipelined in one command. Redirects are very between qp and qmn
                     {Indices, Responses} = lists:unzip(merge_responses(NewSuccesses2 ++ Successes)),
                     % Update the query config with the full, ordered set of responses
                     Query#query{indices = Indices, response = Responses};

@@ -129,15 +129,49 @@ delete_a() ->
 delete_b() ->
     delete(ecredis_b).
 
+
+get_pid(ClusterName, Key) ->
+    ecredis_server:get_eredis_pid_by_slot(ClusterName,
+            ecredis_command_parser:get_key_slot(Key)).
+
+
 pipeline(ClusterName) ->
-    ?assertNotMatch([{ok, _},{ok, _},{ok, _}],
-                    ecredis:qp(ClusterName, [["SET", "a1", "aaa"],
-                                             ["SET", "a2", "aaa"],
-                                             ["SET", "a3", "aaa"]])),
-    ?assertMatch([{ok, _},{ok, _},{ok, _}],
-                 ecredis:qp(ClusterName, [["LPUSH", "a", "aaa"],
-                                          ["LPUSH", "a", "bbb"],
-                                          ["LPUSH", "a", "ccc"]])).
+    % qp queries expect all keys to hash to the same slot
+    ?assertMatch(
+        [{ok, _},{ok, _},{ok, _}],
+        ecredis:qp(ClusterName, [
+            ["LPUSH", "a", "aaa"],
+            ["LPUSH", "a", "bbb"],
+            ["LPUSH", "a", "ccc"]
+        ])
+    ),
+
+    % hash tags guarantee that all keys hash to the same slot - only the name
+    % inside the {} will be hashed
+    ?assertMatch(
+        [{ok, _},{ok, _},{ok, _}],
+        ecredis:qp(ClusterName, [
+            ["SET", "{foo}:a1", "aaa"],
+            ["SET", "{foo}:a2", "aaa"],
+            ["SET", "{foo}:a3", "aaa"]
+        ])
+    ),
+
+    % qp pipelines are not redirected if all of the keys don't belong to the 
+    % same node
+    ?assertNotEqual(
+        get_pid(ClusterName, "a1"),
+        get_pid(ClusterName, "a2")
+    ),
+    ?assertNotMatch(
+        [{ok, _},{ok, _},{ok, _}],
+        ecredis:qp(ClusterName, [
+            ["SET", "a1", "aaa"],
+            ["SET", "a2", "aaa"],
+            ["SET", "a3", "aaa"]
+        ])
+    ).
+
 
 pipeline_a() ->
     pipeline(ecredis_a).

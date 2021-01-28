@@ -153,7 +153,9 @@ execute_query(#query{command = Command, retries = Retries, pid = Pid} = Query) -
                     NewSuccesses2 = [filter_out_asking_result(Q) || Q <- NewSuccesses],
                     % Put the original successes and new successes back in order.
                     % The merging logic is primarily intended for qmn, as qp redirects
-                    % will always be pipelined in one command. Redirects are very between qp and qmn
+                    % will always be pipelined in one command. Redirects are very 
+                    % uncommon, so it's simpler to keep the code common between qp and qmn
+                    % even if it can be more efficiently done for qp
                     {Indices, Responses} = lists:unzip(merge_responses(NewSuccesses2 ++ Successes)),
                     % Update the query config with the full, ordered set of responses
                     Query#query{indices = Indices, response = Responses};
@@ -235,13 +237,13 @@ get_successes_and_retries(#query{
 %% unique. If two queries in the original list have the same destination, they become
 %% a pipeline command, where order is preserved based on the querys' indices
 group_by_destination(Queries) ->
-    maps:values(lists:foldr(fun add_to_map/2, maps:new(), Queries)).
+    maps:values(lists:foldr(fun group_by_destination/2, maps:new(), Queries)).
 
 
 %% @doc Add a query to a map. If a query to the same destination already exists,
 %% add add the command, response, and index to the query.  
--spec add_to_map(#query{}, map()) -> map().
-add_to_map(#query{command = Command, response = Response, pid = Pid, indices = [Index]} = Query, Map) ->
+-spec group_by_destination(#query{}, map()) -> map().
+group_by_destination(#query{command = Command, response = Response, pid = Pid, indices = [Index]} = Query, Map) ->
     case maps:get(Pid, Map, undefined) of
         #query{command = Commands, response = Responses, indices = Indices} ->
             NewQuery = Query#query{

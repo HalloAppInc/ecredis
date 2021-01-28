@@ -4,7 +4,9 @@ Resources used in the building of ecredis:
 - https://github.com/Tiroshan/eredis_cluster_client
 - https://github.com/Nordix/eredis_cluster
 
+## Creating a client
 
+TODO
 
 ## Query Specs
 
@@ -20,12 +22,8 @@ Resources used in the building of ecredis:
 ```erlang
 -spec qp(ClusterName :: atom(), Commands :: redis_command()) -> redis_result()
 ```
-`qp` should be used for pipeline commands to Redis.
-
-#### Caller Assumptions
-
-- Every key in the pipeline hashes to the same slot (prints out error if they don't)
-  - Note: redirects are still served, even if the keys don't all hash to the same slot
+`qp` should be used for pipeline commands to Redis. It is assumed that every key in the pipeline
+should hashes to the same slot. (prints out error and does not handle redirects if they don't)
 
 ### Multi-Node Queries
 

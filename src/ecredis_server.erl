@@ -9,7 +9,8 @@
 -export([
     get_eredis_pid_by_slot/2,
     lookup_eredis_pid/2,
-    remap_cluster/2
+    remap_cluster/2,
+    lookup_address_info/2
 ]). 
 
 %% Callbacks for gen_server.
@@ -41,6 +42,11 @@ get_eredis_pid_by_slot(ClusterName, Slot) ->
 -spec remap_cluster(ClusterName :: atom(), Version :: integer()) -> {ok, Version :: integer()}.
 remap_cluster(ClusterName, Version) ->
     gen_server:call(ClusterName, {remap_cluster, Version}).
+
+
+
+lookup_address_info(ClusterName, Pid) ->
+    ets:match(ets_table_name(ClusterName, ?NODE_PIDS), {'$1', Pid}).
 
 
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%

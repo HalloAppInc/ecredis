@@ -138,7 +138,7 @@ execute_query(#query{retries = Retries} = Query) when Retries >= ?REDIS_CLUSTER_
     Query;
 execute_query(#query{command = Command, retries = Retries, pid = Pid} = Query) ->
     throttle_retries(Retries),
-    NewQuery = Query#query{response = eredis_query(Pid, Command)},
+    NewQuery = filter_out_asking_result(Query#query{response = eredis_query(Pid, Command)}),
     case get_successes_and_retries(NewQuery) of
         {_Successes, []} ->
             % All commands were successful - return the query as is
@@ -148,17 +148,14 @@ execute_query(#query{command = Command, retries = Retries, pid = Pid} = Query) -
                 ok ->
                     % Reexecute all queries that failed
                     NewSuccesses = [execute_query(Q) || Q <- QueriesToResend],
-                    % Remove any (ASKING, <<"OK">>) command/response pairs that are
-                    % artifacts from redirection
-                    NewSuccesses2 = [filter_out_asking_result(Q) || Q <- NewSuccesses],
                     % Put the original successes and new successes back in order.
                     % The merging logic is primarily intended for qmn, as qp redirects
                     % will always be pipelined in one command. Redirects are very 
                     % uncommon, so it's simpler to keep the code common between qp and qmn
                     % even if it can be more efficiently done for qp
-                    {Indices, Responses} = lists:unzip(merge_responses(NewSuccesses2 ++ Successes)),
+                    {Indices, Response} = merge_responses(NewSuccesses ++ Successes),
                     % Update the query config with the full, ordered set of responses
-                    Query#query{indices = Indices, response = Responses};
+                    Query#query{indices = Indices, response = Response};
                 error ->
                     ecredis_logger:log_error("All keys in pipeline command are not mapped to the same slot", Query),
                     NewQuery
@@ -303,10 +300,12 @@ index_responses(#query{response = Response, indices = [Index]}) ->
 
 %% @doc Merge the responses of all of the queries based on the indices of the
 %% resonses. Used to re-order the responses if some had to be resent due to errors
--spec merge_responses([[#query{}]]) -> [{integer(), redis_result()}].
+-spec merge_responses([[#query{}]]) -> {[integer()], redis_result()}.
+merge_responses([#query{query_type = q, response = Response, indices = [Index]}]) ->
+    {[Index], Response};
 merge_responses(QueryList) ->
     IndexedResponses = lists:map(fun index_responses/1, QueryList),
-    lists:merge(IndexedResponses).
+    lists:unzip(lists:merge(IndexedResponses)).
 
 
 %% @doc When a query receives an ASK response, we prepend the ASKING command
@@ -314,8 +313,13 @@ merge_responses(QueryList) ->
 %% <<"OK">> from redis. But, the client didn't send these commands, so we need to
 %% remove these responses so they don't get returned to the client. 
 -spec filter_out_asking_result(#query{}) -> #query{}.
-filter_out_asking_result(#query{command = Commands, response = Responses} = Query)
-        when is_list(Commands), is_list(Responses) ->
+filter_out_asking_result(#query{query_type = q,
+        command = [["ASKING"], Command],
+        response = [_AskResponse, Response]} = Query) ->
+    Query#query{command = Command, response = Response};
+filter_out_asking_result(#query{query_type = QueryType,
+        command = Commands, response = Responses} = Query)
+        when is_list(Commands), is_list(Responses), QueryType =:= qmn orelse QueryType =:= qp ->
     {FilteredCommands, FilteredResponses} = lists:unzip(lists:filter(fun
         ({["ASKING"], {ok, <<"OK">>}}) -> 
             false;

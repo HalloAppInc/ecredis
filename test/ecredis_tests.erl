@@ -4,6 +4,12 @@
 
 -include("ecredis.hrl").
 
+%%% TEST NOTES
+%%% 
+%%% Tests have been run only on a redis cluster with three primary nodes, and one
+%%% replica node for each primary.
+
+
 setup() ->
     ecredis_sup:start_link().
 
@@ -23,6 +29,24 @@ get_and_set_b() ->
     get_and_set(ecredis_b).
 
 
+
+%%% Findings
+%%% 
+%%% Q: Does an "ASKING" command cause errors when the slot already belongs to
+%%% the node?
+%%% 
+%%% Motivation: The following situation is possible:
+%%% 
+%%% [{ok, _}, {error, ASK Dest}, {error, ASK Dest}, {error, MOVED Dest}] = [["GET", "{key}1"], ["GET", "{key}2"], ["GET", "{key}3"], ["GET", "{key}4"]]
+%%% 
+%%% The final MOVED response indicated that the slot that {key} hashes to has been fully
+%%% moved to the destination pointed to by Dest. (all destinations are the same since all
+%%% hash to the same slot) When ["GET", "{key}2"], ["GET", "{key}3"] are resent,
+%%% they are prepended with ASKING commands since that was the response they received,
+%%% but the ASKING commands are no longer necessary since the slot now belongs to 
+%%% the Destination node. 
+%%% 
+%%% A: No, it does not. Unnecessary ASKING commands don't cause falures :)
 
 
 test_redirect_keeps_pipeline(ClusterName) ->
@@ -64,45 +88,6 @@ extract_response(#query{response = Response}) ->
     Response.
 
 
-%%% This is useful in the very specific case where a slot begins and finishes
-%%% migration at different points in a pipeline. For example, the following situation is possible:
-%%% 
-%%% [{ok, _}, {error, ASK Dest}, {error, ASK Dest}, {error, MOVED Dest}] = [["GET", "{key}1"], ["GET", "{key}2"], ["GET", "{key}3"], ["GET", "{key}4"]]
-%%% 
-%%% The final MOVED response indicated that the slot that {key} hashes to has been fully
-%%% moved to the destination pointed to by Dest. (all destinations are the same since all
-%%% hash to the same slot) When ["GET", "{key}2"], ["GET", "{key}3"] are resent,
-%%% they are prepended with ASKING commands since that was the response they received,
-%%% but the ASKING commands are no longer necessary since the slot now belongs to 
-%%% the Destination node. This test ensures that these unnecessary ASKING commands
-%%% don't cause falures :)
-test_asking(ClusterName) ->
-    ?assertEqual({ok, <<"OK">>}, ecredis:q(ClusterName, ["SET", "key", "value"])),
-
-    Slot = ecredis_command_parser:get_key_slot("key"),
-
-    %% Prepend the command with asking, even though we know we're sending the command
-    %% to the correct node. This shows that ASKING does not prevent a node from
-    %% serving a slot.
-    Query = #query{
-        query_type = qp,
-        cluster_name = ClusterName,
-        command = [["ASKING"],["GET", "key"]],
-        slot = Slot,
-        version = 0,
-        retries = 0,
-        indices = [1, 2]
-        },
-
-    ?assertEqual([{ok, <<"OK">>}, {ok, <<"value">>}], extract_response(ecredis:query_by_slot(Query))).
-
-
-test_asking_a() ->
-    test_asking(ecredis_a).
-
-test_asking_b() ->
-    test_asking(ecredis_b).
-
 binary(ClusterName) ->
     ?assertEqual({ok, <<"OK">>}, ecredis:q(ClusterName,
                                            [<<"SET">>, <<"key_binary">>, <<"value_binary">>])),
@@ -128,6 +113,195 @@ delete_a() ->
 
 delete_b() ->
     delete(ecredis_b).
+
+
+
+asking_test(ClusterName) ->
+    % get the slots and pids of key1 and key2
+    MigratingSlot = ecredis_command_parser:get_key_slot("key1"),
+    {PidSrc, VersionSrc} = get_pid(ClusterName, "key1"),
+    {PidDest, VersionDest} = get_pid(ClusterName, "key2"),
+
+    % in the 3 node configuration, key1 and key2 belong to different slots,
+    % and the slots belong to different nodes. This could be different in
+    % different configurations, and the test keys would need to be adjusted accordingly
+    ?assertNotEqual({PidSrc, VersionSrc}, {PidDest, VersionDest}),
+
+    % clear all keys on PidSrc
+    Query0 = #query{
+        query_type = q,
+        cluster_name = ClusterName,
+        command = ["FLUSHALL"],
+        pid = PidSrc,
+        version = VersionSrc,
+        retries = 0,
+        indices = [1]
+    },
+    {ok, <<"OK">>} = extract_response(ecredis:execute_query(Query0)),
+
+    % get the node ids of PidSrc and PidDest
+    {ok, NodeId1} = extract_response(ecredis:execute_query(#query{
+        query_type = q,
+        cluster_name = ClusterName,
+        command = ["CLUSTER", "MYID"],
+        pid = PidSrc,
+        version = VersionSrc,
+        retries = 0,
+        indices = [1]
+    })),
+    {ok, NodeId2} = extract_response(ecredis:execute_query(#query{
+        query_type = q,
+        cluster_name = ClusterName,
+        command = ["CLUSTER", "MYID"],
+        pid = PidDest,
+        version = VersionDest,
+        retries = 0,
+        indices = [1]
+    })),
+
+    % the node id's are different from each other, since the pids are differnt
+    ?assertNotEqual(NodeId1, NodeId2),
+
+    % this should NOT cause any redirects as the slot has not been moved
+    {ok, <<"OK">>} = ecredis:q(ClusterName, ["SET", "{key1}:a", "valueA"]),
+
+    % set PidDest to be ready to import MigratingSlot
+    {ok, <<"OK">>} = extract_response(ecredis:execute_query(#query{
+        query_type = q,
+        cluster_name = ClusterName,
+        command = ["CLUSTER", "SETSLOT", MigratingSlot, "IMPORTING", NodeId1],
+        pid = PidDest,
+        version = VersionDest,
+        retries = 0,
+        indices = [1]
+    })),
+
+    % set PidSrc to be ready to migrate MigratingSlot
+    {ok, <<"OK">>} = extract_response(ecredis:execute_query(#query{
+        query_type = q,
+        cluster_name = ClusterName,
+        command = ["CLUSTER", "SETSLOT", MigratingSlot, "MIGRATING", NodeId2],
+        pid = PidSrc,
+        version = VersionSrc,
+        retries = 0,
+        indices = [1]
+    })),
+
+    % this query should NOT produce an ASK error, since the key already exists
+    {ok, <<"valueA">>} = ecredis:q(ClusterName, ["GET", "{key1}:a"]),
+
+    % this query should produce an ASK error, and get redirected
+    {ok, <<"OK">>} = ecredis:q(ClusterName, ["SET", "{key1}:b", "valueB"]),
+
+    % get the host and port of the destination node
+    [[[Host, Port]]] = ecredis_server:lookup_address_info(ClusterName, PidDest),
+
+    % migrate Slot1
+    {ok, <<"OK">>} = extract_response(ecredis:execute_query(#query{
+        query_type = q,
+        cluster_name = ClusterName,
+        command = ["MIGRATE", Host, Port, "{key1}:a", "0", "5000"],
+        pid = PidSrc,
+        version = VersionSrc,
+        retries = 0,
+        indices = [1]
+    })),
+
+    % notify the involved nodes that the migration is done
+    {ok, <<"OK">>} = extract_response(ecredis:execute_query(#query{
+        query_type = q,
+        cluster_name = ClusterName,
+        command = ["CLUSTER", "SETSLOT", MigratingSlot, "NODE", NodeId2],
+        pid = PidSrc,
+        version = VersionSrc,
+        retries = 0,
+        indices = [1]
+    })),
+    {ok, <<"OK">>} = extract_response(ecredis:execute_query(#query{
+        query_type = q,
+        cluster_name = ClusterName,
+        command = ["CLUSTER", "SETSLOT", MigratingSlot, "NODE", NodeId2],
+        pid = PidDest,
+        version = VersionDest,
+        retries = 0,
+        indices = [1]
+    })),
+
+    % this should cause a MOVED error, and refresh the mapping
+    {ok, <<"OK">>} = ecredis:q(ClusterName, ["SET", "{key1}:a", "valueA"]),
+
+    % since the mapping is refreshed, the pids should be equal because we
+    % migrated key1 to the node where key2 lives
+    ?assertEqual(get_pid(ClusterName, "key1"), get_pid(ClusterName, "key2")),
+
+    % Now we move MigratingSlot back to PidSrc, so that we don't interfere
+    % with other test cases
+
+    % set PidSrc to be ready to import MigratingSlot
+    {ok, <<"OK">>} = extract_response(ecredis:execute_query(#query{
+        query_type = q,
+        cluster_name = ClusterName,
+        command = ["CLUSTER", "SETSLOT", MigratingSlot, "IMPORTING", NodeId2],
+        pid = PidSrc,
+        version = VersionSrc,
+        retries = 0,
+        indices = [1]
+    })),
+
+    % set PidDest to be ready to migrate MigratingSlot
+    {ok, <<"OK">>} = extract_response(ecredis:execute_query(#query{
+        query_type = q,
+        cluster_name = ClusterName,
+        command = ["CLUSTER", "SETSLOT", MigratingSlot, "MIGRATING", NodeId1],
+        pid = PidDest,
+        version = VersionDest,
+        retries = 0,
+        indices = [1]
+    })),
+
+    % get the host and port of the destination node
+    [[[Host2, Port2]]] = ecredis_server:lookup_address_info(ClusterName, PidSrc),
+
+    % migrate Slot1
+    {ok, <<"OK">>} = extract_response(ecredis:execute_query(#query{
+        query_type = q,
+        cluster_name = ClusterName,
+        command = ["MIGRATE", Host2, Port2, "", "0", "5000", "KEYS", "{key1}:a", "{key1}:b"],
+        pid = PidDest,
+        version = VersionDest,
+        retries = 0,
+        indices = [1]
+    })),
+
+    % notify the involved nodes that the migration is done
+    {ok, <<"OK">>} = extract_response(ecredis:execute_query(#query{
+        query_type = q,
+        cluster_name = ClusterName,
+        command = ["CLUSTER", "SETSLOT", MigratingSlot, "NODE", NodeId1],
+        pid = PidDest,
+        version = VersionDest,
+        retries = 0,
+        indices = [1]
+    })),
+    {ok, <<"OK">>} = extract_response(ecredis:execute_query(#query{
+        query_type = q,
+        cluster_name = ClusterName,
+        command = ["CLUSTER", "SETSLOT", MigratingSlot, "NODE", NodeId1],
+        pid = PidSrc,
+        version = VersionSrc,
+        retries = 0,
+        indices = [1]
+    })),
+
+    % this should cause a MOVED error, and refresh the mapping
+    {ok, <<"OK">>} = ecredis:q(ClusterName, ["SET", "{key1}:a", "valueA"]),
+
+    ok.
+
+
+asking_test_a() ->
+    asking_test(ecredis_a).
+
 
 
 get_pid(ClusterName, Key) ->
@@ -223,21 +397,21 @@ successful_moved_maintains_oredering_a() ->
 successful_moved_maintains_oredering_b() ->
     successful_moved_maintains_oredering(ecredis_b).
 
-% multinode(ClusterName) ->
-%     N=1000,
-%     Keys = [integer_to_list(I) || I <- lists:seq(1, N)],
-%     [ecredis:q(ClusterName, ["SETEX", Key, "50", Key]) || Key <- Keys],
-%     _ = [{ok, integer_to_binary(list_to_integer(Key) + 1)} || Key <- Keys],
-%     %% ?assertMatch(Guard1, eredis_cluster:qmn([["INCR", Key] || Key <- Keys])),
-%     ecredis:q(ClusterName, ["SETEX", "a", "50", "0"]),
-%     _ = [{ok, integer_to_binary(Key)} || Key <- lists:seq(1, 5)].
-%     %% ?assertMatch(Guard2, eredis_cluster:qmn([["INCR", "a"] || _I <- lists:seq(1,5)]))
+multinode(ClusterName) ->
+    N=1000,
+    Keys = [integer_to_list(I) || I <- lists:seq(1, N)],
+    [ecredis:q(ClusterName, ["SETEX", Key, "50", Key]) || Key <- Keys],
+    _ = [{ok, integer_to_binary(list_to_integer(Key) + 1)} || Key <- Keys],
+    %% ?assertMatch(Guard1, eredis_cluster:qmn([["INCR", Key] || Key <- Keys])),
+    ecredis:q(ClusterName, ["SETEX", "a", "50", "0"]),
+    _ = [{ok, integer_to_binary(Key)} || Key <- lists:seq(1, 5)].
+    %% ?assertMatch(Guard2, eredis_cluster:qmn([["INCR", "a"] || _I <- lists:seq(1,5)]))
  
-% multinode_a() ->
-%     multinode(ecredis_a).
+multinode_a() ->
+    multinode(ecredis_a).
 
-% multinode_b() ->
-%     multinode(ecredis_b).
+multinode_b() ->
+    multinode(ecredis_b).
 
 
 eval_key(ClusterName) ->
@@ -286,16 +460,15 @@ basic_test_() ->
         {setup, fun setup/0, fun cleanup/1,
          [{"get and set a", fun get_and_set_a/0},
           {"get and set b", fun get_and_set_b/0},
-          {"test asking a", fun test_asking_a/0},
-          {"test asking b", fun test_asking_b/0},
           {"binary a", fun binary_a/0},
           {"binary b", fun binary_b/0},
           {"delete test a", fun delete_a/0},
           {"delete test b", fun delete_b/0},
           {"pipeline a", fun pipeline_a/0},
           {"pipeline b", fun pipeline_b/0},
-        %   {"multi node a", fun multinode_a/0},
-        %   {"multi node b", fun multinode_b/0},
+          {"asking tests", fun asking_test_a/0},
+          {"multi node a", fun multinode_a/0},
+          {"multi node b", fun multinode_b/0},
           {"no dup after successful moved a", fun no_dup_after_successful_moved_a/0},
           {"no dup after successful moved b", fun no_dup_after_successful_moved_b/0},
           {"successful moved maintains oredering a", fun successful_moved_maintains_oredering_a/0},

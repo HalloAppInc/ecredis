@@ -23,6 +23,43 @@ get_and_set_b() ->
     get_and_set(ecredis_b).
 
 
+
+
+test_redirect_keeps_pipeline(ClusterName) ->
+    % assert that key and key2 hash to different nodes
+    ?assertNotEqual(
+        ecredis_server:get_eredis_pid_by_slot(ClusterName, ecredis_command_parser:get_key_slot("key1")),
+        ecredis_server:get_eredis_pid_by_slot(ClusterName, ecredis_command_parser:get_key_slot("key2"))
+    ),
+
+    Slot1 = ecredis_command_parser:get_key_slot("key1"),
+    {Pid1, Version1} = ecredis_server:get_eredis_pid_by_slot(ClusterName, Slot1),
+    
+    Query = #query{
+        query_type = qmn,
+        cluster_name = ClusterName,
+        command = [["SET", "key1", "value1"], ["GET", "key1"], ["SET", "key2", "value2"], ["GET", "key2"]],
+        % last two queries have the same destination, so they should be
+        % pipelined when redirected
+        response = [{ok, <<"OK">>}, {ok, <<"value1">>}, {error,<<"MOVED 4998 127.0.0.1:30001">>}, {error,<<"MOVED 4998 127.0.0.1:30001">>}],
+        slot = Slot1,
+        pid = Pid1,
+        version = Version1,
+        retries = 0,
+        indices = [1, 2, 3, 4]
+    },
+
+    % assert that there's only one query to be re-executed, and that it's a
+    % pipeline with the correct commands in the correct order
+    ?assertMatch(
+        {_, [#query{command = [["SET","key2","value2"],["GET","key2"]]}]},
+        ecredis:get_successes_and_retries(Query)).
+
+
+test_redirect_keeps_pipeline_a() ->
+    test_redirect_keeps_pipeline(ecredis_a).
+
+
 extract_response(#query{response = Response}) ->
     Response.
 
@@ -48,7 +85,7 @@ test_asking(ClusterName) ->
     %% to the correct node. This shows that ASKING does not prevent a node from
     %% serving a slot.
     Query = #query{
-        query_type = q,
+        query_type = qp,
         cluster_name = ClusterName,
         command = [["ASKING"],["GET", "key"]],
         slot = Slot,
@@ -92,15 +129,49 @@ delete_a() ->
 delete_b() ->
     delete(ecredis_b).
 
+
+get_pid(ClusterName, Key) ->
+    ecredis_server:get_eredis_pid_by_slot(ClusterName,
+            ecredis_command_parser:get_key_slot(Key)).
+
+
 pipeline(ClusterName) ->
-    ?assertMatch([{ok, <<"OK">>},{ok, <<"OK">>},{ok, <<"OK">>}],
-                    ecredis:qp(ClusterName, [["SET", "a1", "aaa"],
-                                             ["SET", "a2", "aaa"],
-                                             ["SET", "a3", "aaa"]])),
-    ?assertMatch([{ok, _},{ok, _},{ok, _}],
-                 ecredis:qp(ClusterName, [["LPUSH", "a", "aaa"],
-                                          ["LPUSH", "a", "bbb"],
-                                          ["LPUSH", "a", "ccc"]])).
+    % qp queries expect all keys to hash to the same slot
+    ?assertMatch(
+        [{ok, _},{ok, _},{ok, _}],
+        ecredis:qp(ClusterName, [
+            ["LPUSH", "a", "aaa"],
+            ["LPUSH", "a", "bbb"],
+            ["LPUSH", "a", "ccc"]
+        ])
+    ),
+
+    % hash tags guarantee that all keys hash to the same slot - only the name
+    % inside the {} will be hashed
+    ?assertMatch(
+        [{ok, _},{ok, _},{ok, _}],
+        ecredis:qp(ClusterName, [
+            ["SET", "{foo}:a1", "aaa"],
+            ["SET", "{foo}:a2", "aaa"],
+            ["SET", "{foo}:a3", "aaa"]
+        ])
+    ),
+
+    % qp pipelines are not redirected if all of the keys don't belong to the 
+    % same node
+    ?assertNotEqual(
+        get_pid(ClusterName, "a1"),
+        get_pid(ClusterName, "a2")
+    ),
+    ?assertNotMatch(
+        [{ok, _},{ok, _},{ok, _}],
+        ecredis:qp(ClusterName, [
+            ["SET", "a1", "aaa"],
+            ["SET", "a2", "aaa"],
+            ["SET", "a3", "aaa"]
+        ])
+    ).
+
 
 pipeline_a() ->
     pipeline(ecredis_a).
@@ -114,7 +185,7 @@ pipeline_b() ->
 no_dup_after_successful_moved(ClusterName) ->
     ?assertMatch({ok, _}, ecredis:q(ClusterName, ["DEL", "key1"])),
     ?assertMatch([{ok, _}, {ok, _}],
-        ecredis:qp(ClusterName, [["INCR", "key1"],["SET", "key2", "value"]])),
+        ecredis:qmn(ClusterName, [["INCR", "key1"],["SET", "key2", "value"]])),
     ?assertMatch({ok, <<"1">>}, ecredis:q(ClusterName, ["GET", "key1"])).
 
 
@@ -128,7 +199,7 @@ no_dup_after_successful_moved_b() ->
 
 successful_moved_maintains_oredering(ClusterName) ->
     ?assertMatch([{ok, _}, {ok, _}, {ok, _}],
-        ecredis:qp(ClusterName,
+        ecredis:qmn(ClusterName,
             [["DEL", "{key}1"], ["DEL", "key2"], ["DEL", "{key}3"]] 
         )
     ),
@@ -144,7 +215,7 @@ successful_moved_maintains_oredering(ClusterName) ->
     % the first and third commands will succeed, and the second will cause a MOVED
     % error that needs to be resent. this ensures that ordering of responses is preserved
     ?assertMatch([{ok, <<"value1">>}, {ok, <<"value2">>}, {ok, <<"value3">>}],
-        ecredis:qp(ClusterName, [["GET", "{key}1"],["GET", "key2"],["GET", "{key}3"]])).
+        ecredis:qmn(ClusterName, [["GET", "{key}1"],["GET", "key2"],["GET", "{key}3"]])).
 
 successful_moved_maintains_oredering_a() ->
     successful_moved_maintains_oredering(ecredis_a).
@@ -234,7 +305,8 @@ basic_test_() ->
           {"evalsha a", fun eval_sha_a/0},
           {"evalsha b", fun eval_sha_b/0},
           {"bitstring support a", fun bitstring_support_a/0},
-          {"bitstring support b", fun bitstring_support_b/0}
+          {"bitstring support b", fun bitstring_support_b/0},
+          {"test_redirect_keeps_pipeline", fun test_redirect_keeps_pipeline_a/0}
         ]
         }
     }.

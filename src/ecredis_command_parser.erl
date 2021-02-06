@@ -4,6 +4,7 @@
 -export([
     get_key_from_command/1,
     get_key_slot/1,
+    get_command_type/1,
     check_sanity_of_keys/1
 ]).
 
@@ -102,6 +103,20 @@ hashed_key(Key) ->
                     end
             end
     end.
+
+
+-spec get_command_type(redis_command()) -> atom().
+get_command_type([[X|Y]|Z]) when is_binary(X) ->
+    get_command_type([[binary_to_list(X)|Y]|Z]);
+get_command_type([[X|_Y]|_Z]) when is_list(X) ->
+    case string:to_lower(X) of
+        "multi" ->
+            multi;
+        _ ->
+            normal
+    end;
+get_command_type(_) ->
+    normal.
 
 
 -spec check_sanity_of_keys(redis_command()) -> ok | error.

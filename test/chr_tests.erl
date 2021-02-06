@@ -40,8 +40,8 @@ perf_test1(N) ->
 
 
 perf_test2() ->
-    perf_test1(100000),
-    perf_test1(200000),
+    perf_test1(1000),
+    perf_test1(2000),
     true.
 
 perf_test_() ->

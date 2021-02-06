@@ -9,14 +9,10 @@
 -export([
     get_eredis_pid_by_slot/2,
     lookup_eredis_pid/2,
-    remap_cluster/2
-]). 
-
--ifdef(TEST).
--export([
-    lookup_address_info/2
+    remap_cluster/2,
+    lookup_address_info/2  %% Used for tests only.
 ]).
--endif.
+
 
 %% Callbacks for gen_server.
 -export([init/1, handle_call/3, handle_cast/2, handle_info/2, terminate/2, code_change/3]).
@@ -49,6 +45,7 @@ remap_cluster(ClusterName, Version) ->
     gen_server:call(ClusterName, {remap_cluster, Version}).
 
 
+-spec lookup_address_info(ClusterName :: atom(), Pid :: pid()) -> [[term()]]. 
 lookup_address_info(ClusterName, Pid) ->
     ets:match(ets_table_name(ClusterName, ?NODE_PIDS), {'$1', Pid}).
 
@@ -206,7 +203,7 @@ lookup_eredis_pid(ClusterName, Node) ->
         [] ->
            Result = safe_eredis_start_link(Node#node.address, Node#node.port),
            case Result of
-               {ok, Pid} -> 
+               {ok, Pid} ->
                    ets:insert(ets_table_name(ClusterName, ?NODE_PIDS),
                               {[Node#node.address, Node#node.port], Pid}),
                    {ok, Pid};

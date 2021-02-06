@@ -28,6 +28,7 @@
 
 -record(query, {
     query_type :: atom(), % type of query
+    command_type :: atom(), % type of command (multi, normal)
     cluster_name :: atom(), % name of the cluster
     version :: integer(), % the version of the client-side slots/nodes mapping
     command :: redis_command(), % the command to send
@@ -40,7 +41,6 @@
 }).
 
 -define(REDIS_CLUSTER_HASH_SLOTS, 16384).
--define(OL_TRANSACTION_TTL, 16).
 -define(REDIS_CLUSTER_REQUEST_TTL, 16).
 -define(REDIS_RETRY_DELAY, 100).
 

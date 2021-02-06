@@ -19,6 +19,8 @@
 -endif.
 
 -include("ecredis.hrl").
+-include_lib("stdlib/include/assert.hrl").
+
 
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 % API
@@ -97,7 +99,8 @@ query_by_command(#query{command = Command} = Query) ->
             {error, {invalid_cluster_key, Command}};
         Key ->
             Slot = ecredis_command_parser:get_key_slot(Key),
-            NewQuery = Query#query{slot = Slot, version = 0, retries = 0},
+            CommandType = ecredis_command_parser:get_command_type(Command),
+            NewQuery = Query#query{command_type = CommandType, slot = Slot, version = 0, retries = 0},
             case query_by_slot(NewQuery) of
                 #query{response = Response} ->
                     {ok, Response};
@@ -115,14 +118,16 @@ query_by_slot(#query{retries = Retries} = Query) when Retries >= ?REDIS_CLUSTER_
     ecredis_logger:log_error("Max retries reached", Query),
     Query;
 query_by_slot(#query{command = Command, retries = Retries} = Query) ->
+    throttle_retries(Retries),
     case get_pid_and_map_version(Query) of
         undefined ->
             ecredis_logger:log_error("Unable to execute - slot has no connection", Query),
             % Slot was not mapped to any pid - remap the cluster and try again 
-            remap_cluster(Query),
+            {ok, NewVersion} = remap_cluster(Query),
             query_by_slot(Query#query{
                 response = {error, no_connection, Command},
-                retries = Retries + 1
+                retries = Retries + 1,
+                version = NewVersion
             });
         {Pid, Version} ->
             execute_query(Query#query{pid = Pid, version = Version})
@@ -170,27 +175,96 @@ get_successes_and_retries(#query{response = {ok, _}} = Query) ->
     % The query was successful - add the query to the successes list
     {[Query], []};
 get_successes_and_retries(#query{
-        response = {error, <<"MOVED ", Dest/binary>>},
-        retries = Retries} = Query) ->
+        response = {error, <<"MOVED ", Dest/binary>>}} = Query) ->
+    handle_moved(Query, Dest);
+get_successes_and_retries(#query{
+        response = {error, <<"ASK ", Dest/binary>>}} = Query) ->
+    handle_ask(Query, Dest);
+get_successes_and_retries(#query{response = {error, _}, retries = Retries} = Query) ->
+    % TODO fill in handlers for other errors, as for when to retry or when to not
+    % - TRYAGAIN should retry
+    % - CLUSTERDOWN should retry
+    % - tcp_closed?
+    % - no_connection?
+    ecredis_logger:log_error("Other error", Query),
+    {[], [Query#query{retries = Retries + 1}]};
+get_successes_and_retries(#query{
+        command = _Command,
+        command_type = multi,
+        retries = Retries,
+        response = Responses} = Query) when is_list(Responses) ->
+    LastResponse = lists:last(Responses),
+    MultiRes = case LastResponse of
+        {ok, _} ->
+            {[Query], []};
+        {error, _} ->
+            ?assert(length(Responses) > 1),
+            %% multi command should behave similar to qp for accessing the error, except it should
+            %% fail or succeed as a unit.
+            %% e.g.
+            %% [["MULTI"],["GET","{key1}:a"],["EXEC"]]
+            %% -> [{ok, <<"OK">>}, {ok, <<"QUEUED">>}, {ok, [<<"OK">>]}]
+            %% On failure:
+            %% [{ok, <<"OK">>}, {error, <<"ASK 9189 127.0.0.1:30005">>},
+            %% {error, <<"EXECABORT Transaction discarded because of previous errors.">>}]
+            SecondResponse = lists:nth(2, Responses),
+            case SecondResponse of
+                {error, <<"MOVED ", Dest/binary>>} ->
+                    handle_moved(Query, Dest);
+                {error, <<"ASK ", _Dest/binary>>} ->
+                    ecredis_logger:log_warning("ASK", Query),
+                    %% Converting [["MULTI"],["GET","{key1}:a"],["EXEC"]] into
+                    %% [["MULTI"],["ASKING"] ["GET","{key1}:a"],["EXEC"]] does not seem to work.
+                    %% Will return as a failed query in order to be tried again potentially with
+                    %% "MOVED" in a future request.
+                    {[], [Query#query{retries = Retries + 1}]};
+                {_, _} ->
+                    %% Unknown error, return as is.
+                    ecredis_logger:log_warning("Unknown error", Query),
+                    {[Query], []}
+            end
+    end,
+    MultiRes; 
+get_successes_and_retries(#query{
+        command = Commands,
+        response = Responses,
+        indices = Indices} = Query) when is_list(Responses) ->
+    % Check each command in a pipeline individually for errors, then aggregate
+    % the lists of successes and retries
+    IndexCommandResponseList = lists:zip3(Indices, Commands, Responses),
+    % Separate the pipeline into individual commands
+    %
+    % TODO(vipin): Need to capture the cluster version.
+    PossibleRetries = [Query#query{
+        command = Command,
+        response = Response,
+        indices = [Index]} || {Index, Command, Response} <- IndexCommandResponseList],
+    {Successes, NeedToRetries} = lists:unzip([get_successes_and_retries(Q) || Q <- PossibleRetries]),
+    {lists:flatten(Successes), group_by_destination(lists:flatten(NeedToRetries))}.
+
+
+-spec handle_moved(#query{}, binary()) -> {[#query{}], [#query{}]}.
+handle_moved(#query{retries = Retries} = Query, Dest) ->
     % The command was sent to the wrong node - refresh the mapping, update
     % the query to reflect the new pid, and add the query to the retries list
     ecredis_logger:log_warning("MOVED", Query),
     case get_destination_pid(Query, Dest) of
         {ok, Slot, Pid} ->
-            remap_cluster(Query),
+            {ok, NewVersion} = remap_cluster(Query),
             {[], [Query#query{
                 slot = Slot,
                 pid = Pid,
-                retries = Retries + 1
+                retries = Retries + 1,
+                version = NewVersion
             }]};
         undefined ->
             % Unable to connect to the redirect destination. Return the error as-is
             {[Query], []}
-    end;
-get_successes_and_retries(#query{
-        command = Command,
-        response = {error, <<"ASK ", Dest/binary>>},
-        retries = Retries} = Query) ->
+    end.
+
+
+-spec handle_ask(#query{}, binary()) -> {[#query{}], [#query{}]}.
+handle_ask(#query{command = Command, retries = Retries} = Query, Dest) ->
     % The command's slot is in the process of migration - upate the query to reflect
     % the new pid, prepend the ASKING command, and add the query to the retries list
     ecredis_logger:log_warning("ASK", Query),
@@ -205,29 +279,7 @@ get_successes_and_retries(#query{
         undefined ->
             % Unable to connect to the redirect destination. Return the error as-is
             {[Query], []}
-    end;
-get_successes_and_retries(#query{response = {error, _}, retries = Retries} = Query) ->
-    % TODO fill in handlers for other errors, as for when to retry or when to not
-    % - TRYAGAIN should retry
-    % - CLUSTERDOWN should retry
-    % - tcp_closed?
-    % - no_connection?
-    ecredis_logger:log_error("Other error", Query),
-    {[], [Query#query{retries = Retries + 1}]};
-get_successes_and_retries(#query{
-        command = Commands,
-        response = Responses,
-        indices = Indices} = Query) when is_list(Responses) ->
-    % Check each command in a pipeline individually for errors, then aggregate
-    % the lists of successes and retries
-    IndexCommandResponseList = lists:zip3(Indices, Commands, Responses),
-    % Separate the pipeline into individual commands
-    PossibleRetries = [Query#query{
-        command = Command,
-        response = Response,
-        indices = [Index]} || {Index, Command, Response} <- IndexCommandResponseList],
-    {Successes, NeedToRetries} = lists:unzip([get_successes_and_retries(Q) || Q <- PossibleRetries]),
-    {lists:flatten(Successes), group_by_destination(lists:flatten(NeedToRetries))}.
+    end.
 
 
 %% @doc Merge a list of queries into a list of queries where each destination is
@@ -238,7 +290,7 @@ group_by_destination(Queries) ->
 
 
 %% @doc Add a query to a map. If a query to the same destination already exists,
-%% add add the command, response, and index to the query.  
+%% add the command, response, and index to the query.  
 -spec group_by_destination(#query{}, map()) -> map().
 group_by_destination(#query{command = Command, response = Response, pid = Pid, indices = [Index]} = Query, Map) ->
     case maps:get(Pid, Map, undefined) of

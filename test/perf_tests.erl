@@ -18,7 +18,7 @@ set_get(N) ->
 
 perf1(Parent) ->
     Start = os:system_time(millisecond),
-    while(20000, fun set_get/1),
+    while(2000, fun set_get/1),
     End = os:system_time(millisecond),
     Time = End - Start,
     Parent ! {finished, Time}.
@@ -43,7 +43,7 @@ perf_test1(N) ->
     wait_for(N),
     EndTime = os:system_time(microsecond),
     T = EndTime - StartTime,
-    ?debugFmt("~w processes took ~w us => ~f ops/sec", [N, T, (2 * N * 20000) / (T / 1000000)]),
+    ?debugFmt("~w processes took ~w us => ~f ops/sec", [N, T, (2 * N * 2000) / (T / 1000000)]),
     ok.
 
 
@@ -51,12 +51,12 @@ perf_test2() ->
     ecredis_sup:start_link(),
     perf_test1(1),
     perf_test1(2),
-    perf_test1(5),
-    perf_test1(10),
-    perf_test1(20),
-    perf_test1(50),
-    perf_test1(100),
-    perf_test1(200),
+%%    perf_test1(5),
+%%    perf_test1(10),
+%%    perf_test1(20),
+%%    perf_test1(50),
+%%    perf_test1(100),
+%%    perf_test1(200),
     ecredis_sup:stop(),
     true.
 

@@ -212,8 +212,9 @@ test_redirect_keeps_pipeline(ClusterName) ->
 test_redirect_keeps_pipeline_a() ->
     test_redirect_keeps_pipeline(ecredis_a).
 
-test_redirect_keeps_pipeline_b() ->
-    test_redirect_keeps_pipeline(ecredis_b).
+%% TODO(vipin): The following test needs cluster specific values.
+%% test_redirect_keeps_pipeline_b() ->
+%%    test_redirect_keeps_pipeline(ecredis_b).
 
 
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
@@ -270,6 +271,10 @@ asking_test(ClusterName) ->
     % this should NOT cause any redirects as the slot has not been moved
     {ok, <<"OK">>} = ecredis:q(ClusterName, ["SET", "{key1}:a", "valueA"]),
 
+    % Do the above command using "MULTI".
+    [{ok,<<"OK">>},{ok,<<"QUEUED">>},{ok,[<<"OK">>]}] = 
+        ecredis:q(ClusterName, [["MULTI"], ["SET", "{key1}:a", "valueA"], ["EXEC"]]),
+
     % set PidDest to be ready to import MigratingSlot
     {ok, <<"OK">>} = extract_response(ecredis:execute_query(#query{
         query_type = q,
@@ -295,8 +300,16 @@ asking_test(ClusterName) ->
     % this query should NOT produce an ASK error, since the key already exists
     {ok, <<"valueA">>} = ecredis:q(ClusterName, ["GET", "{key1}:a"]),
 
+    % Do the above command using "MULTI".
+    [{ok,<<"OK">>},{ok,<<"QUEUED">>},{ok,[<<"valueA">>]}] =
+        ecredis:q(ClusterName, [["MULTI"], ["GET", "{key1}:a"], ["EXEC"]]),
+
     % this query should produce an ASK error, and get redirected
     {ok, <<"OK">>} = ecredis:q(ClusterName, ["SET", "{key1}:b", "valueB"]),
+
+    % Do the above command using "MULTI".
+    [{ok,<<"OK">>}, {error, _}, {error, _}] =
+        ecredis:q(ClusterName, [["MULTI"], ["SET", "{key1}:b", "valueB"], ["EXEC"]]),
 
     % get the host and port of the destination node
     [[[Host, Port]]] = ecredis_server:lookup_address_info(ClusterName, PidDest),
@@ -333,6 +346,11 @@ asking_test(ClusterName) ->
     })),
 
     % this should cause a MOVED error, and refresh the mapping
+
+    % Do the below command using "MULTI".
+    [{ok,<<"OK">>},{ok,<<"QUEUED">>},{ok,[<<"OK">>]}] =
+        ecredis:q(ClusterName, [["MULTI"], ["SET", "{key1}:a", "valueA"], ["EXEC"]]),
+    % No moved error
     {ok, <<"OK">>} = ecredis:q(ClusterName, ["SET", "{key1}:a", "valueA"]),
 
     % since the mapping is refreshed, the pids should be equal because we
@@ -403,6 +421,11 @@ asking_test(ClusterName) ->
 
     % this should cause a MOVED error, and refresh the mapping
     {ok, <<"OK">>} = ecredis:q(ClusterName, ["SET", "{key1}:a", "valueA"]),
+
+    % Do the above command using "MULTI". No moved error.
+    [{ok,<<"OK">>},{ok,<<"QUEUED">>},{ok,[<<"OK">>]}] =
+        ecredis:q(ClusterName, [["MULTI"], ["SET", "{key1}:a", "valueA"], ["EXEC"]]),
+
     ok.
 
 asking_test_a() ->
@@ -584,6 +607,8 @@ extract_response(#query{response = Response}) ->
     Response.
 
 
+%% TODO(vipin): split into multiple test.
+%%
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 %%% tests
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
@@ -599,7 +624,8 @@ basic_test_() ->
             {"pipeline a", fun pipeline_a/0},
             {"pipeline b", fun pipeline_b/0},
             {"test redirect keeps pipeline a", fun test_redirect_keeps_pipeline_a/0},
-            {"test redirect keeps pipeline b", fun test_redirect_keeps_pipeline_b/0},  
+            %% TODO(vipin): The following test needs cluster specific values.
+            % {"test redirect keeps pipeline b", fun test_redirect_keeps_pipeline_b/0},  
             {"asking test a", fun asking_test_a/0},
             {"asking test b", fun asking_test_b/0},
             {"no dup after successful moved a", fun no_dup_after_successful_moved_a/0},

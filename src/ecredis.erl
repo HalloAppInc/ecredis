@@ -174,6 +174,9 @@ execute_query(#query{command = Command, retries = Retries, pid = Pid} = Query) -
 get_successes_and_retries(#query{response = {ok, _}} = Query) ->
     % The query was successful - add the query to the successes list
     {[Query], []};
+get_successes_and_retries(#query{response = {error, <<"ERR no such key">>}} = Query) ->
+    % The query failed and there is no reason to try it again.
+    {[Query], []};
 get_successes_and_retries(#query{
         response = {error, <<"MOVED ", Dest/binary>>}} = Query) ->
     handle_moved(Query, Dest);

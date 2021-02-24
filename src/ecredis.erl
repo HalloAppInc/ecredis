@@ -7,7 +7,11 @@
     start_link/1,
     q/2,
     qp/2,
-    qmn/2
+    qmn/2,
+    qa/2,
+    get_nodes/1,
+    flushdb/1,
+    qn/3
 ]).
 
 -ifdef(TEST).
@@ -62,6 +66,41 @@ qp(ClusterName, Commands) ->
             Reason
     end.
 
+%% @doc Run command on each master node of the redis cluster.
+%% TODO(shashank): unit tests for qa
+%% TODO(shashank): Failure and retry handling. More concretely:
+%%  1. Track success, failure on a node level.
+%%  2. Check if the list of nodes changes during query execution.
+%%  If the list does change, will need to send qa to new nodes.
+%% @end
+-spec qa(ClusterName :: atom(), Command :: redis_command()) -> [redis_result()].
+qa(ClusterName, Command) ->
+    Nodes = get_nodes(ClusterName),
+    [qn(ClusterName, Node, Command) || Node <- Nodes].
+
+%% @doc Perform flushdb command on each node of the redis cluster.
+%% TODO(shashank): unit tests for flushdb
+%% @end
+-spec flushdb(ClusterName :: atom()) -> ok | {error, Reason::bitstring()}.
+flushdb(ClusterName) ->
+    Result = qa(ClusterName, ["FLUSHDB"]),
+    case proplists:lookup(error, Result) of
+        none ->
+            ok;
+        Error ->
+            Error
+    end.
+
+%% @doc Return a list of master nodes.
+%% TODO(shashank): modify this to use the ETS table instead of gen_server state
+get_nodes(ClusterName) ->
+    ecredis_server:get_node_list(ClusterName).
+
+%% @doc Execute the given command at the provided node.
+%% TODO(shashank): unit tests for qn
+qn(ClusterName, Node, Command) ->
+    {ok, Pid} = ecredis_server:lookup_eredis_pid(ClusterName, Node),
+    eredis_query(Pid, Command).
 
 %%% PROTOTYPE FOR NOW - this is here as a stub for test cases. It works, technically,
 %%% but is really inefficient.
@@ -321,7 +360,7 @@ eredis_query(Pid, Command) ->
     eredis:q(Pid, Command).
 
 
-%% @doc If the command is being retried, sleep the process for a little bit to 
+%% @doc If the command is being retried, sleep the process for a little bit to
 %% allow for remapping to occur
 -spec throttle_retries(integer()) -> ok.
 throttle_retries(0) ->

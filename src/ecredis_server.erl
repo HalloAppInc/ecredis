@@ -10,6 +10,7 @@
     get_eredis_pid_by_slot/2,
     lookup_eredis_pid/2,
     remap_cluster/2,
+    get_node_list/1,
     lookup_address_info/2  %% Used for tests only.
 ]).
 
@@ -23,6 +24,7 @@
 -record(state, {
     cluster_name :: string(),
     init_nodes :: [#node{}],
+    node_list :: [#node{}],
     version :: integer()  %% Used to avoid unnecessary refresh of Redis slots.
 }).
 
@@ -50,6 +52,8 @@ lookup_address_info(ClusterName, Pid) ->
     ets:match(ets_table_name(ClusterName, ?NODE_PIDS), {'$1', Pid}).
 
 
+get_node_list(ClusterName) ->
+    gen_server:call(ClusterName, get_nodes).
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 
 -spec remap_cluster_internal(State :: #state{}, Version :: integer()) -> State :: #state{}.
@@ -80,7 +84,8 @@ reload_slots_map(State) ->
     SlotsMaps = parse_cluster_slots(ClusterSlots),
     NewState = connect_all_slots(State, SlotsMaps),
     create_eredis_pids_cache(NewState, SlotsMaps),
-    NewState.
+    NodeList = [SlotsMap#slots_map.node || SlotsMap <- SlotsMaps],
+    NewState#state{node_list = NodeList}.
 
 
 -spec get_cluster_slots(ClusterName :: atom(), InitNodes :: [#node{}]) -> 
@@ -238,7 +243,8 @@ safe_eredis_start_link(Ip, Port) ->
 
 init([ClusterName, InitNodes]) ->
     State = #state{
-        cluster_name = ClusterName
+        cluster_name = ClusterName,
+        node_list = []
     },
     create_ets_tables(ClusterName),
     InitNodes2 = [#node{address = Address, port = Port} || {Address, Port} <- InitNodes],
@@ -248,6 +254,8 @@ init([ClusterName, InitNodes]) ->
 handle_call({remap_cluster, Version}, _From, State) ->
     NewState = remap_cluster_internal(State, Version),
     {reply, {ok, NewState#state.version}, NewState};
+handle_call(get_nodes, _From, State) ->
+    {reply, State#state.node_list, State};
 handle_call(_Request, _From, State) ->
     {reply, ignored, State}.
 

@@ -67,19 +67,26 @@ qp(ClusterName, Commands) ->
     end.
 
 %% @doc Run command on each master node of the redis cluster.
-%% TODO(shashank): unit tests for qa
-%% TODO(shashank): Failure and retry handling. More concretely:
-%%  1. Track success, failure on a node level.
-%%  2. Check if the list of nodes changes during query execution.
-%%  If the list does change, will need to send qa to new nodes.
 %% @end
 -spec qa(ClusterName :: atom(), Command :: redis_command()) -> [redis_result()].
 qa(ClusterName, Command) ->
     Nodes = get_nodes(ClusterName),
-    [qn(ClusterName, Node, Command) || Node <- Nodes].
+    Res = [qn(ClusterName, Node, Command) || Node <- Nodes],
+    % make sure list of nodes hasn't changed
+    NewNodesSet = sets:from_list(get_nodes(ClusterName)),
+    InitialNodesSet = sets:from_list(Nodes),
+    case NewNodesSet of
+        InitialNodesSet -> Res;
+        _ -> 
+            Added = sets:to_list(
+                sets:subtract(NewNodesSet, InitialNodesSet)),
+            Removed = sets:to_list(
+                sets:subtract(InitialNodesSet, NewNodesSet)),
+            error_logger:error_msg("Unable to execute ~p on ~p - nodes ~p added, ~p removed~n", [Command, ClusterName, Added, Removed]),
+            {error, changed_node_list_try_again}
+    end.
 
 %% @doc Perform flushdb command on each node of the redis cluster.
-%% TODO(shashank): unit tests for flushdb
 %% @end
 -spec flushdb(ClusterName :: atom()) -> ok | {error, Reason::bitstring()}.
 flushdb(ClusterName) ->
@@ -97,11 +104,20 @@ get_nodes(ClusterName) ->
     ecredis_server:get_node_list(ClusterName).
 
 %% @doc Execute the given command at the provided node.
-%% TODO(shashank): unit tests for qn
 qn(ClusterName, Node, Command) ->
     {ok, Pid} = ecredis_server:lookup_eredis_pid(ClusterName, Node),
-    eredis_query(Pid, Command).
-
+    Query = #query{
+        query_type = qn,
+        cluster_name = ClusterName,
+        command = Command,
+        pid = Pid,
+        node = Node,
+        retries = 0,
+        version = 0
+    }, 
+    Res = execute_query(Query),
+    Res#query.response.
+    
 %%% PROTOTYPE FOR NOW - this is here as a stub for test cases. It works, technically,
 %%% but is really inefficient.
 %%% 
@@ -217,11 +233,25 @@ get_successes_and_retries(#query{response = {error, <<"ERR no such key">>}} = Qu
     % The query failed and there is no reason to try it again.
     {[Query], []};
 get_successes_and_retries(#query{
+        response = {error, <<"MOVED ", _>>}, query_type = qn} = Query) ->
+    % We don't retry MOVED errors on qn queries
+    {[Query], []};
+get_successes_and_retries(#query{
+        response = {error, <<"ASK ", _>>}, query_type = qn} = Query) ->
+    % We don't retry ASK errors on qn queries
+    {[Query], []};
+get_successes_and_retries(#query{
         response = {error, <<"MOVED ", Dest/binary>>}} = Query) ->
     handle_moved(Query, Dest);
 get_successes_and_retries(#query{
         response = {error, <<"ASK ", Dest/binary>>}} = Query) ->
     handle_ask(Query, Dest);
+get_successes_and_retries(#query{response = {error, Reason}, query_type = qn,
+        cluster_name = ClusterName, node = Node, retries = Retries} = Query) ->
+    {ok, NewVersion} = remap_cluster(Query),
+    {ok, Pid} = ecredis_server:lookup_eredis_pid(ClusterName, Node),
+    ecredis_logger:log_error("Error ~p in query ~p~n", [Reason, Query]),
+    {[], [Query#query{retries = Retries + 1, pid = Pid, version = NewVersion}]};
 get_successes_and_retries(#query{response = {error, _}, retries = Retries} = Query) ->
     % TODO fill in handlers for other errors, as for when to retry or when to not
     % - TRYAGAIN should retry

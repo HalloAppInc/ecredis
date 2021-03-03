@@ -34,6 +34,7 @@
     command :: redis_command(), % the command to send
     slot :: integer(), % the slot of the command
     pid :: pid(), % pid of the node to send query to
+    node :: #node{}, % the IP and Port of the node to query, only used in qn
     response :: redis_result(), % response from redis
     retries :: integer(), % number of retries for a given query
     indices :: [integer()] % indices of commands, used to merge retried 

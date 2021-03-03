@@ -594,6 +594,66 @@ bitstring_support_a() ->
 bitstring_support_b() ->
     bitstring_support(ecredis_b).
 
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%%% flushdb_zero_dbsize
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+flushdb_zero_dbsize(ClusterName) ->
+    get_and_set(ClusterName),
+    Sizes = ecredis:qa(ClusterName, ["DBSIZE"]),
+    IntSizes = [binary_to_integer(Size) || {ok, Size} <- Sizes],
+    % assert at least one node is non-empty
+    ?assertEqual(true, lists:any(fun(I) -> I > 0 end, IntSizes)),
+    ecredis:flushdb(ClusterName),
+    NewSizes = ecredis:qa(ClusterName, ["DBSIZE"]),
+    NewIntSizes = [binary_to_integer(Size) || {ok, Size} <- NewSizes],
+    % assert all nodes are empty
+    ?assertEqual(true, lists:all(fun(I) -> I == 0 end, NewIntSizes)). 
+
+flushdb_zero_dbsize_a() ->
+    flushdb_zero_dbsize(ecredis_a).
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%%% all_masters
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+all_masters(ClusterName) ->
+    NodeList = ecredis:get_nodes(ClusterName),
+    ?assert(length(NodeList) >= 3),
+    % check dbsize of each node
+    Sizes = ecredis:qa(ClusterName, ["DBSIZE"]),
+    ?assert(length(Sizes) == length(NodeList)),
+    % assert all responses are ok
+    ?assertEqual(none, proplists:lookup(error, Sizes)),
+    Repl = ecredis:qa(ClusterName, ["INFO", "replication"]),
+    % make sure they are all masters
+    lists:foreach(
+        fun({ok, Response}) -> 
+            ?assertEqual("role:master", get_role(Response))
+        end,
+        Repl).
+
+all_masters_a() ->
+    all_masters(ecredis_a).
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%%% specific_node
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+specific_node(ClusterName) ->
+    get_and_set(ClusterName),
+    [First|_] = ecredis:get_nodes(ClusterName),
+    TotalKeys = total_keys(ecredis:qa(ClusterName, ["keys", "*"])),
+    FirstNodeKeys = total_keys(ecredis:qn(ClusterName, First, ["keys", "*"])),
+    ?assertMatch({ok, _}, ecredis:qn(ClusterName, First, ["FLUSHDB"])),
+    ?assertMatch({ok, _}, ecredis:qn(ClusterName, First, ["SET", "key", "value"])),
+    {ok, DbSize} = ecredis:qn(ClusterName, First, ["DBSIZE"]),
+    ?assert(binary_to_integer(DbSize) == 1),
+    TotalKeysFinal = total_keys(ecredis:qa(ClusterName, ["keys", "*"])),
+    ?assertEqual(TotalKeysFinal, TotalKeys - FirstNodeKeys + 1).
+
+specific_node_a() ->
+    specific_node(ecredis_a).
 
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 %%% internal helper functions
@@ -606,6 +666,21 @@ get_pid(ClusterName, Key) ->
 extract_response(#query{response = Response}) ->
     Response.
 
+get_role(Resp) ->
+    RespStr = binary_to_list(Resp),
+    [_|[Role|_]] = string:lexemes(RespStr, [[$\r,$\n]]),
+    Role.
+
+total_keys(Arr) ->
+    % each is of the form {ok, []}
+    total_keys(Arr, 0).
+total_keys([], SoFar) ->
+    SoFar;
+total_keys({ok, Entry}, SoFar) ->
+    % to deal with tuple case 
+    SoFar + length(Entry);
+total_keys([{ok, First}|Rest], SoFar) ->
+    total_keys(Rest, length(First) + SoFar).
 
 %% TODO(vipin): split into multiple test.
 %%
@@ -639,6 +714,9 @@ basic_test_() ->
             {"evalsha a", fun eval_sha_a/0},
             {"evalsha b", fun eval_sha_b/0},
             {"bitstring support a", fun bitstring_support_a/0},
-            {"bitstring support b", fun bitstring_support_b/0}
+            {"bitstring support b", fun bitstring_support_b/0},
+            {"flushdb works correctly a", fun flushdb_zero_dbsize_a/0},
+            {"query on all masters a", fun all_masters_a/0},
+            {"specific node test a", fun specific_node_a/0}
         ]}
     }.

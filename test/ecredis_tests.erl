@@ -646,14 +646,56 @@ specific_node(ClusterName) ->
     TotalKeys = total_keys(ecredis:qa(ClusterName, ["keys", "*"])),
     FirstNodeKeys = total_keys(ecredis:qn(ClusterName, First, ["keys", "*"])),
     ?assertMatch({ok, _}, ecredis:qn(ClusterName, First, ["FLUSHDB"])),
-    ?assertMatch({ok, _}, ecredis:qn(ClusterName, First, ["SET", "key", "value"])),
     {ok, DbSize} = ecredis:qn(ClusterName, First, ["DBSIZE"]),
-    ?assert(binary_to_integer(DbSize) == 1),
+    ?assert(binary_to_integer(DbSize) == 0),
     TotalKeysFinal = total_keys(ecredis:qa(ClusterName, ["keys", "*"])),
-    ?assertEqual(TotalKeysFinal, TotalKeys - FirstNodeKeys + 1).
+    ?assert(TotalKeysFinal == TotalKeys - FirstNodeKeys).
 
 specific_node_a() ->
     specific_node(ecredis_a).
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%%% qmn_maintains_ordering
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+qmn_maintains_ordering(ClusterName) ->
+    ecredis:flushdb(ClusterName),
+    ?assertMatch(
+        [{ok, undefined}, {ok, <<"OK">>}],
+        ecredis:qmn(ClusterName, [
+            ["GET", "key1"],
+            ["SET", "key1", "value"]
+        ])
+    ),
+    ecredis:flushdb(ClusterName),
+    ?assertMatch(
+        [
+            {ok, undefined},
+            {ok, <<"OK">>},
+            {ok, <<"value">>},
+            {ok, <<"OK">>},
+            {ok, undefined},
+            {ok, <<"OK">>}
+        ],
+        ecredis:qmn(ClusterName, [
+            ["GET", "key1"],
+            ["SET", "key1", "value"],
+            ["GET", "key1"],
+            ["SET", "key2", "value"],
+            ["GET", "key4"],
+            ["SET", "key4", "value"]
+        ])
+    ),
+    ecredis:flushdb(ClusterName),
+    ?assertMatch(
+        [{ok, <<"OK">>}, {ok, <<"value">>}],
+        ecredis:qmn(ClusterName, [
+            ["SET", "key1", "value"],
+            ["GET", "key1"]
+        ])
+    ).
+qmn_maintains_ordering_a() ->
+    qmn_maintains_ordering(ecredis_a).
 
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 %%% internal helper functions
@@ -700,7 +742,7 @@ basic_test_() ->
             {"pipeline b", fun pipeline_b/0},
             {"test redirect keeps pipeline a", fun test_redirect_keeps_pipeline_a/0},
             %% TODO(vipin): The following test needs cluster specific values.
-            % {"test redirect keeps pipeline b", fun test_redirect_keeps_pipeline_b/0},  
+            % {"test redirect keeps pipeline b", fun test_redirect_keeps_pipeline_b/0},
             {"asking test a", fun asking_test_a/0},
             {"asking test b", fun asking_test_b/0},
             {"no dup after successful moved a", fun no_dup_after_successful_moved_a/0},
@@ -717,6 +759,7 @@ basic_test_() ->
             {"bitstring support b", fun bitstring_support_b/0},
             {"flushdb works correctly a", fun flushdb_zero_dbsize_a/0},
             {"query on all masters a", fun all_masters_a/0},
-            {"specific node test a", fun specific_node_a/0}
+            {"specific node test a", fun specific_node_a/0},
+            {"qmn maintains ordering of responses", fun qmn_maintains_ordering_a/0}
         ]}
     }.

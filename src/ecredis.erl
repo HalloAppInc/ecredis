@@ -103,13 +103,14 @@ flushdb(ClusterName) ->
 get_nodes(ClusterName) ->
     ecredis_server:get_node_list(ClusterName).
 
-%% @doc Execute the given command at the provided node.
-qn(ClusterName, Node, Command) ->
+%% @doc Execute the given commands at the provided node.
+qn(ClusterName, Node, Commands) ->
     {ok, Pid} = ecredis_server:lookup_eredis_pid(ClusterName, Node),
     Query = #query{
         query_type = qn,
         cluster_name = ClusterName,
-        command = Command,
+        command = Commands,
+        indices = lists:seq(1, length(Commands)),
         pid = Pid,
         node = Node,
         retries = 0,
@@ -117,31 +118,63 @@ qn(ClusterName, Node, Command) ->
     }, 
     Res = execute_query(Query),
     Res#query.response.
-    
-%%% PROTOTYPE FOR NOW - this is here as a stub for test cases. It works, technically,
-%%% but is really inefficient.
-%%% 
-%%% TODO: group by destination before sending queries
+
+%%% @doc Execute a multi-node query. Groups commands by destination node.
 -spec qmn(ClusterName :: atom(), Commands :: redis_pipeline_command()) -> redis_pipeline_result().
 qmn(ClusterName, Commands) ->
-    Query = #query{
-        query_type = qmn,
-        cluster_name = ClusterName,
-        command = Commands,
-        indices = lists:seq(1, length(Commands))
-    },
-    case query_by_command(Query) of
-        {ok, Response} ->
-            Response;
-        {error, Reason} ->
-            Reason
-    end.
-
-    
+    Queries = group_commands(Commands, ClusterName), % list of queries, one per PID
+    Res = lists:map(fun(A) ->
+        case A#query.pid of
+            undefined -> A;
+            _ -> execute_query(A)
+        end
+        end, Queries),
+    {_, Result} = merge_responses(Res),
+    Result.
 
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 % INTERNAL FUNCTIONS
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+%%% @doc return a list of qmn queries, one for each destination node
+-spec group_commands(Commands :: redis_command(), ClusterName :: atom()) -> list().
+group_commands(Commands, ClusterName) ->
+    IndexedCommands = lists:zip(lists:seq(1, length(Commands)), Commands),
+    Queries = lists:map(fun({Index, Command}) -> get_query(Index, Command, ClusterName) end, IndexedCommands),
+    group_by_destination(Queries).
+
+get_query(Index, Command, ClusterName) ->
+    Dest = get_destination(ClusterName, Command),
+    case Dest of 
+        {error, Reason} ->
+            make_query(ClusterName, qmn, Command, Reason, undefined, Index);
+        {ok, _Slot, Pid, _Version} ->
+            make_query(ClusterName, qmn, Command, undefined, Pid, Index)
+    end.
+
+make_query(ClusterName, QueryType, Command, Response, Pid, Index) ->
+    #query{
+        cluster_name = ClusterName,
+        query_type = QueryType,
+        command = Command,
+        response = Response,
+        pid = Pid,
+        indices = [Index],
+        retries = 0
+    }.
+
+%%% @doc finds the key and then slot, and finally the PID of the node
+%%% corresponding to Command.
+get_destination(ClusterName, Command) ->
+    case ecredis_command_parser:get_key_from_command(Command) of 
+        undefined ->
+            ecredis_logger:log_error("Unable to execute - invalid cluster key", Command),
+            {error, {invalid_cluster_key, Command}};
+        Key ->
+            Slot = ecredis_command_parser:get_key_slot(Key),
+            {Pid, Version} = ecredis_server:get_eredis_pid_by_slot(ClusterName, Slot),
+            {ok, Slot, Pid, Version}
+    end.
 
 
 %% @doc Use the command of the given query to determine which slot the command

@@ -6,15 +6,19 @@
 ]).
 
 -include("ecredis.hrl").
+-include("logger.hrl").
 
 log_error(Error, Query) ->
-    log(fun error_logger:warning_msg/2, Error, Query).
+    {Fmt, Args} = log(Error, Query),
+    ?ERROR(Fmt, Args).
 
 log_warning(Error, Query) ->
-    log(fun error_logger:warning_msg/2, Error, Query).
+    {Fmt, Args} = log(Error, Query),
+    ?WARNING(Fmt, Args).
 
-log(F, Error, Query) ->
-    erlang:apply(F, ["~p, Query type: ~p, Cluster name: ~p, Map version: ~p, Command: ~p, Slot: ~p, Pid: ~p, Response: ~p, Retries: ~p, Indices: ~p",[
+log(Error, Query) ->
+    Fmt = "~p, Query type: ~p, Cluster name: ~p, Map version: ~p, Command: ~p, Slot: ~p, Pid: ~p, Response: ~p, Retries: ~p, Indices: ~p",
+    Args = [
         Error,
         Query#query.query_type,
         Query#query.cluster_name,
@@ -25,5 +29,6 @@ log(F, Error, Query) ->
         Query#query.response,
         Query#query.retries,
         Query#query.indices
-    ]]).
+    ],
+    {Fmt, Args}.
 

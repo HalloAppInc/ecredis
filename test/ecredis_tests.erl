@@ -14,13 +14,18 @@ setup() ->
     ecredis_sup:start_link().
 
 
-cleanup(_) ->
+cleanup() ->
     ecredis_sup:stop().
 
 
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 %%% get_and_set
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+get_and_set_test() ->
+    setup(),
+    get_and_set_a(),
+    cleanup(). 
+
 get_and_set(ClusterName) ->
     ?assertEqual(
         {ok, <<"OK">>},
@@ -38,13 +43,16 @@ get_and_set(ClusterName) ->
 get_and_set_a() ->
     get_and_set(ecredis_a).
 
-get_and_set_b() ->
-    get_and_set(ecredis_b).
 
 
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 %%% binary
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+binary_test() ->
+    setup(),
+    binary_a(),
+    cleanup().
+
 binary(ClusterName) ->
     ?assertEqual(
         {ok, <<"OK">>},
@@ -84,13 +92,16 @@ binary(ClusterName) ->
 binary_a() ->
     binary(ecredis_a).
 
-binary_b() ->
-    binary(ecredis_b).
 
 
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 %%% delete
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+delete_test() ->
+    setup(),
+    delete_a(),
+    cleanup().
+
 delete(ClusterName) ->
     ?assertMatch(
         {ok, _},
@@ -112,13 +123,16 @@ delete(ClusterName) ->
 delete_a() ->
     delete(ecredis_a).
 
-delete_b() ->
-    delete(ecredis_b).
 
 
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 %%% pipeline
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+pipeline_test() ->
+    setup(),
+    pipeline_a(),
+    cleanup().
+
 pipeline(ClusterName) ->
     % qp queries expect all keys to hash to the same slot
     ?assertMatch(
@@ -159,13 +173,16 @@ pipeline(ClusterName) ->
 pipeline_a() ->
     pipeline(ecredis_a).
 
-pipeline_b() ->
-    pipeline(ecredis_b).
 
 
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 %%% test_redirect_keeps_pipeline
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+redirect_keeps_pipeline_test() ->
+    setup(), 
+    test_redirect_keeps_pipeline_a(),
+    cleanup().
+
 test_redirect_keeps_pipeline(ClusterName) ->
     % assert that key and key2 hash to different nodes
     ?assertNotEqual(
@@ -220,6 +237,11 @@ test_redirect_keeps_pipeline_a() ->
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 %%% asking_test
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+asking_test() ->
+    setup(),
+    asking_test_a(),
+    cleanup().
+
 asking_test(ClusterName) ->
     % get the slots and pids of key1 and key2
     MigratingSlot = ecredis_command_parser:get_key_slot("key1"),
@@ -431,13 +453,16 @@ asking_test(ClusterName) ->
 asking_test_a() ->
     asking_test(ecredis_a).
 
-asking_test_b() ->
-    asking_test(ecredis_b).
 
 
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 %%% no_dup_after_successful_moved
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+no_dup_after_successful_moved_test() ->
+    setup(),
+    no_dup_after_successful_moved_a(),
+    cleanup().
+
 no_dup_after_successful_moved(ClusterName) ->
     %% The pipeline will get sent to the node where the first key is stored, causing
     %% the SET query to respond with a MOVED error - the test succeeds if the first
@@ -461,13 +486,16 @@ no_dup_after_successful_moved(ClusterName) ->
 no_dup_after_successful_moved_a() ->
     no_dup_after_successful_moved(ecredis_a).
 
-no_dup_after_successful_moved_b() ->
-    no_dup_after_successful_moved(ecredis_b).
 
 
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 %%% successful_moved_maintains_ordering
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+successful_moved_maintains_ordering_test() ->
+    setup(),
+    successful_moved_maintains_oredering_a(),
+    cleanup().
+
 successful_moved_maintains_oredering(ClusterName) ->
     ?assertMatch(
         [{ok, _}, {ok, _}, {ok, _}],
@@ -511,8 +539,6 @@ successful_moved_maintains_oredering(ClusterName) ->
 successful_moved_maintains_oredering_a() ->
     successful_moved_maintains_oredering(ecredis_a).
 
-successful_moved_maintains_oredering_b() ->
-    successful_moved_maintains_oredering(ecredis_b).
 
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 %%% multinode
@@ -537,6 +563,11 @@ successful_moved_maintains_oredering_b() ->
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 %%% eval_key
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+eval_key_test() ->
+    setup(),
+    eval_key_a(),
+    cleanup().
+
 eval_key(ClusterName) ->
     ecredis:q(ClusterName, ["del", "foo"]),
     ecredis:q(ClusterName, ["eval","return redis.call('set', KEYS[1],'bar')", "1", "foo"]),
@@ -548,13 +579,16 @@ eval_key(ClusterName) ->
 eval_key_a() ->
     eval_key(ecredis_a).
 
-eval_key_b() ->
-    eval_key(ecredis_b).
 
 
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 %%% eval_sha
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+eval_sha_test() ->
+    setup(),
+    eval_sha_a(),
+    cleanup().
+
 eval_sha(ClusterName) ->
     % In this test the key "load" will be used because the "script
     % load" command will be executed in the redis server containing
@@ -575,12 +609,15 @@ eval_sha(ClusterName) ->
 eval_sha_a() ->
     eval_sha(ecredis_a).
 
-eval_sha_b() ->
-    eval_sha(ecredis_b).
 
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 %%% bitstring_support
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+bitstring_support_test() ->
+    setup(),
+    bitstring_support_a(),
+    cleanup().
+
 bitstring_support(ClusterName) ->
     ecredis:q(ClusterName, [<<"set">>, <<"bitstring">>, <<"support">>]),
     ?assertEqual(
@@ -591,12 +628,14 @@ bitstring_support(ClusterName) ->
 bitstring_support_a() ->
     bitstring_support(ecredis_a).
 
-bitstring_support_b() ->
-    bitstring_support(ecredis_b).
 
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 %%% flushdb_zero_dbsize
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+flushdb_zero_dbsize_test() ->
+    setup(),
+    flushdb_zero_dbsize_a(),
+    cleanup().
 
 flushdb_zero_dbsize(ClusterName) ->
     get_and_set(ClusterName),
@@ -616,6 +655,10 @@ flushdb_zero_dbsize_a() ->
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 %%% all_masters
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+all_masters_test() ->
+    setup(),
+    all_masters_a(),
+    cleanup().
 
 all_masters(ClusterName) ->
     NodeList = ecredis:get_nodes(ClusterName),
@@ -639,6 +682,10 @@ all_masters_a() ->
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 %%% specific_node
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+specific_node_test() ->
+    setup(),
+    specific_node_a(),
+    cleanup().
 
 specific_node(ClusterName) ->
     get_and_set(ClusterName),
@@ -657,6 +704,10 @@ specific_node_a() ->
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 %%% qmn_maintains_ordering
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+qmn_maintains_ordering_test() ->
+    setup(),
+    qmn_maintains_ordering_a(),
+    cleanup().
 
 qmn_maintains_ordering(ClusterName) ->
     ecredis:flushdb(ClusterName),
@@ -724,42 +775,3 @@ total_keys({ok, Entry}, SoFar) ->
 total_keys([{ok, First}|Rest], SoFar) ->
     total_keys(Rest, length(First) + SoFar).
 
-%% TODO(vipin): split into multiple test.
-%%
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-%%% tests
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-basic_test_() ->
-    {inorder,
-        {setup, fun setup/0, fun cleanup/1,[
-            {"get and set a", fun get_and_set_a/0},
-            {"get and set b", fun get_and_set_b/0},
-            {"binary a", fun binary_a/0},
-            {"binary b", fun binary_b/0},
-            {"delete a", fun delete_a/0},
-            {"delete b", fun delete_b/0},
-            {"pipeline a", fun pipeline_a/0},
-            {"pipeline b", fun pipeline_b/0},
-            {"test redirect keeps pipeline a", fun test_redirect_keeps_pipeline_a/0},
-            %% TODO(vipin): The following test needs cluster specific values.
-            % {"test redirect keeps pipeline b", fun test_redirect_keeps_pipeline_b/0},
-            {"asking test a", fun asking_test_a/0},
-            {"asking test b", fun asking_test_b/0},
-            {"no dup after successful moved a", fun no_dup_after_successful_moved_a/0},
-            {"no dup after successful moved b", fun no_dup_after_successful_moved_b/0},
-            {"successful moved maintains oredering a", fun successful_moved_maintains_oredering_a/0},
-            {"successful moved maintains oredering b", fun successful_moved_maintains_oredering_b/0},
-            % {"multi node a", fun multinode_a/0},
-            % {"multi node b", fun multinode_b/0},
-            {"eval key a", fun eval_key_a/0},
-            {"eval key b", fun eval_key_b/0},
-            {"evalsha a", fun eval_sha_a/0},
-            {"evalsha b", fun eval_sha_b/0},
-            {"bitstring support a", fun bitstring_support_a/0},
-            {"bitstring support b", fun bitstring_support_b/0},
-            {"flushdb works correctly a", fun flushdb_zero_dbsize_a/0},
-            {"query on all masters a", fun all_masters_a/0},
-            {"specific node test a", fun specific_node_a/0},
-            {"qmn maintains ordering of responses", fun qmn_maintains_ordering_a/0}
-        ]}
-    }.

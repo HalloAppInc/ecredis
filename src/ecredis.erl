@@ -138,22 +138,28 @@ flushdb(ClusterName) ->
 get_nodes(ClusterName) ->
     ecredis_server:get_node_list(ClusterName).
 
-%% @doc Execute the given commands at the provided node.
+%% @doc Execute the given command at the provided node.
 -spec qn(ClusterName :: atom(), Node :: rnode(), Commands :: redis_command()) -> redis_result().
-qn(ClusterName, Node, Commands) ->
-    {ok, Pid} = ecredis_server:lookup_eredis_pid(ClusterName, Node),
-    Query = #query{
-        query_type = qn,
-        cluster_name = ClusterName,
-        command = Commands,
-        indices = lists:seq(1, length(Commands)),
-        pid = Pid,
-        node = Node,
-        retries = 0,
-        version = 0
-    }, 
-    Res = execute_query(Query),
-    Res#query.response.
+qn(ClusterName, Node, Command) ->
+    % We use an existing connection to this Node.
+    case ecredis_server:get_eredis_pid_by_node(ClusterName, Node) of
+        {ok, Pid} ->
+            Query = #query{
+                query_type = qn,
+                cluster_name = ClusterName,
+                command = Command,
+                indices = [1],
+                pid = Pid,
+                node = Node,
+                retries = 0,
+                version = 0 % FIXME: we should have a version here also
+            },
+            Res = execute_query(Query),
+            Res#query.response;
+        {error, missing} ->
+            {error, {not_connected, ClusterName, Node}}
+    end.
+
 
 %%% @doc Execute a multi-node query. Groups commands by destination node.
 -spec qmn(ClusterName :: atom(), Commands :: redis_pipeline_command()) -> redis_pipeline_result().
@@ -246,7 +252,8 @@ query_by_slot(#query{command = Command, retries = Retries} = Query) ->
     case get_pid_and_map_version(Query) of
         undefined ->
             ecredis_logger:log_error("Unable to execute - slot has no connection", Query),
-            % Slot was not mapped to any pid - remap the cluster and try again 
+            % Slot was not mapped to any pid - remap the cluster and try again
+            % FIXME: I don't see how the remap will work because the version in the query is ot set
             {ok, NewVersion} = remap_cluster(Query),
             query_by_slot(Query#query{
                 response = {error, no_connection, Command},
@@ -389,16 +396,15 @@ handle_moved(#query{retries = Retries} = Query, Dest) ->
     % The command was sent to the wrong node - refresh the mapping, update
     % the query to reflect the new pid, and add the query to the retries list
     ecredis_logger:log_warning("MOVED", Query),
-    case get_destination_pid(Query, Dest) of
-        {ok, Slot, Pid} ->
-            {ok, NewVersion} = remap_cluster(Query),
+    case handle_redirect(Query, moved, Dest) of
+        {ok, Slot, Pid, NewVersion} ->
             {[], [Query#query{
                 slot = Slot,
                 pid = Pid,
                 retries = Retries + 1,
                 version = NewVersion
             }]};
-        undefined ->
+        {error, _Reason} ->
             % Unable to connect to the redirect destination. Return the error as-is
             {[Query], []}
     end.
@@ -409,13 +415,14 @@ handle_ask(#query{command = Command, retries = Retries} = Query, Dest) ->
     % The command's slot is in the process of migration - upate the query to reflect
     % the new pid, prepend the ASKING command, and add the query to the retries list
     ecredis_logger:log_warning("ASK", Query),
-    case get_destination_pid(Query, Dest) of
-        {ok, Slot, Pid} ->
+    case handle_redirect(Query, ask, Dest) of
+        {ok, Slot, Pid, Version} ->
             {[], [Query#query{
                 command = [["ASKING"], Command],
                 slot = Slot,
                 pid = Pid,
-                retries = Retries + 1
+                retries = Retries + 1,
+                version = Version
             }]};
         undefined ->
             % Unable to connect to the redirect destination. Return the error as-is
@@ -468,19 +475,39 @@ throttle_retries(_) ->
     timer:sleep(?REDIS_RETRY_DELAY).
 
 
-%% @doc Get the pid associated with the given destination. lookup_eredis_pid/2
-%% will attempt to start a new connection if one does not already exist
--spec get_destination_pid(#query{}, binary()) -> {ok, integer(), pid()} | undefined.
-get_destination_pid(#query{cluster_name = ClusterName}, Dest) ->
+%% @doc Get the pid associated with the given destination. If we don't have existing connection,
+%% we will call add_note start a new connection.
+-spec handle_redirect(Query :: #query{}, RedirectType :: moved | ask, Dest :: binary())
+            -> {ok, Slot :: integer(), Pid :: pid(), Version :: integer()} | {error, Reason :: any()}.
+handle_redirect(#query{cluster_name = ClusterName, version = Version}, RedirectType, Dest) ->
     [SlotBin, AddrPort] = binary:split(Dest, <<" ">>),
     [Address, Port] = binary:split(AddrPort, <<":">>),
     Node = #node{address = binary_to_list(Address), port = binary_to_integer(Port)},
-    case ecredis_server:lookup_eredis_pid(ClusterName, Node) of
+    Slot = binary_to_integer(SlotBin),
+    % lookup the pid of node we are redirected to
+    Result = case ecredis_server:get_eredis_pid_by_node(ClusterName, Node) of
         {ok, Pid} ->
-            {ok, binary_to_integer(SlotBin), Pid};
-        undefined ->
-            undefined
-    end.
+            % if we have a connection just follow the redirect
+            {ok, Slot, Pid, Version};
+        {error, missing} ->
+            % if we are missing a connection we need to ask the ecredis_server to add a connection.
+            % this is gen_server call, adding the node happens on the ecredis_server process
+            case ecredis_server:add_node(ClusterName, Node) of
+                {ok, Pid} ->
+                    % TODO: maybe in the future the version should increment when a new node is added
+                    {ok, Slot, Pid, Version};
+                {error, _Reason} = Err ->
+                    Err
+            end
+    end,
+    % we notify the ecredis_server process about the redirect. This will update the slot map
+    % for this slot only and also schedule full remap
+    case RedirectType of
+        moved -> ecredis_server:handle_moved_async(ClusterName, Version, Slot, Node);
+        ask -> ok
+    end,
+
+    Result.
 
 
 %% @doc Use the indices list from a query to tag each of the responses.

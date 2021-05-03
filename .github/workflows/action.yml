@@ -17,18 +17,36 @@ jobs:
         with:
           otp-version: 23.2
 
-      - name: checkout ecredis_crc16
+      - name: Setup redis
+        uses: shogo82148/actions-setup-redis@v1
+        with:
+          redis-version: "6.2"
+          auto-start: "false"
+
+      - name: Checkout ecredis_crc16
         uses: actions/checkout@v2
         with:
             repository: HalloAppInc/ecredis-crc16
             token: ${{ secrets.nikola_github_secret }}
             path: deps/ecredis_crc16
 
-      - name: prepare-deps
+      - name: Prepare Deps
         run: ./rebar prepare-deps
 
-      - name: compile
+      - name: Compile
         run: ./rebar compile
 
-      # TODO: we need to setup a redis cluster.
-      #- run: ./rebar eunit
+      - name: Start Redis Cluster
+        run: cd scripts; ./create-cluster start; echo yes | ./create-cluster create
+
+      - name: Tests
+        run: ./rebar eunit
+
+      - name: Publish coverage report
+        uses: actions/upload-artifact@v2
+        with:
+            name: coverage
+            path: |
+                .eunit/index.html
+                .eunit/*.COVER.html
+

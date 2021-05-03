@@ -222,7 +222,8 @@ lookup_eredis_pid(ClusterName, Node) ->
 
 
 ets_table_name(ClusterName, Purpose) ->
-    list_to_atom(atom_to_list(ClusterName) ++ atom_to_list(Purpose) ++ atom_to_list(?MODULE)).
+    list_to_atom(atom_to_list(ClusterName) ++ "." ++ atom_to_list(Purpose)
+        ++ "." ++ atom_to_list(?MODULE)).
 
 
 safe_eredis_start_link(Ip, Port) ->

@@ -36,7 +36,7 @@
 % API
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 
-%% @doc Start Redis Cluster client. ClusterName should atom representing the name
+%% @doc Start Redis Cluster client. ClusterName should be atom representing the name
 % of this Redis Cluster client. This name should be bassed in future calls to q() API.
 % InitNodes is a list of initial nodes to connect to.
 -spec start_link(ClusterName, InitNodes) -> {ok, pid()} when
@@ -549,4 +549,3 @@ check_sanity_of_keys(_Query) ->
 %     check_for_moved_errors(Rest);
 % check_for_moved_errors(_) ->
 %     false.
-

@@ -37,7 +37,7 @@
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 
 %% @doc Start Redis Cluster client. ClusterName should be atom representing the name
-% of this Redis Cluster client. This name should be bassed in future calls to q() API.
+% of this Redis Cluster client. This name should be based in future calls to q() API.
 % InitNodes is a list of initial nodes to connect to.
 -spec start_link(ClusterName, InitNodes) -> {ok, pid()} when
         ClusterName :: atom(),

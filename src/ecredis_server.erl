@@ -104,7 +104,11 @@ lookup_address_info(ClusterName, Pid) ->
 remap_cluster_internal(State, Version) ->
     if
         % Version should always be <= the the State#state.version. Its safer to refresh on =<.
-        State#state.version =< Version ->
+        State#state.version == Version ->
+            reload_slots_map(State);
+        State#state.version < Version ->
+            error_logger:info_msg("Cluster: ~p Version: ~p > state.version ~p",
+                [State#state.cluster_name, Version, State#state.version]),
             reload_slots_map(State);
         true ->
             State

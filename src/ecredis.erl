@@ -253,7 +253,7 @@ query_by_slot(#query{command = Command, retries = Retries} = Query) ->
         undefined ->
             ecredis_logger:log_error("Unable to execute - slot has no connection", Query),
             % Slot was not mapped to any pid - remap the cluster and try again
-            % FIXME: I don't see how the remap will work because the version in the query is ot set
+            % FIXME: I don't see how the remap will work because the version in the query is not set
             {ok, NewVersion} = remap_cluster(Query),
             query_by_slot(Query#query{
                 response = {error, no_connection, Command},

@@ -19,6 +19,8 @@
     port :: integer()
 }).
 
+-type rnode() :: #node{}.
+
 -record(slots_map, {
     start_slot :: integer(),
     end_slot :: integer(),

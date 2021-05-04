@@ -1,10 +1,12 @@
 -module(ecredis).
-
--define(ECREDIS_SERVER, ecredis_server).
+-include("ecredis.hrl").
+-include_lib("stdlib/include/assert.hrl").
 
 %% API.
 -export([
     start_link/1,
+    start_link/2,
+    stop/1,
     q/2,
     qp/2,
     qmn/2,
@@ -22,17 +24,49 @@
 ]).
 -endif.
 
--include("ecredis.hrl").
--include_lib("stdlib/include/assert.hrl").
+-export_type([
+    redis_command/0,
+    redis_pipeline_command/0,
+    rnode/0
+]).
+
 
 
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 % API
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 
+%% @doc Start Redis Cluster client. ClusterName should be atom representing the name
+% of this Redis Cluster client. This name should be based in future calls to q() API.
+% InitNodes is a list of initial nodes to connect to.
+-spec start_link(ClusterName, InitNodes) -> {ok, pid()} when
+        ClusterName :: atom(),
+        InitNodes :: list(InitNode),
+        InitNode :: {Host, Port},
+        Host :: string(),
+        Port :: integer().
+start_link(ClusterName, InitNodes)
+        when is_atom(ClusterName), is_list(InitNodes), length(InitNodes) > 0 ->
+    ecredis_server:start_link(ClusterName, InitNodes);
+start_link(ClusterName, _) when not is_atom(ClusterName) ->
+    error({badarg, ClusterName, "must be atom"});
+start_link(_, InitNodes) when not is_list(InitNodes) ->
+    error({badarg, InitNodes, "must be list"});
+start_link(_, InitNodes) when is_list(InitNodes), length(InitNodes) =:= 0 ->
+    error({badarg, InitNodes, "must not be empty"});
+start_link(_, _) ->
+    error(badarg).
+
+
+% TODO: this API is deprecated, use start_link/2
 -spec start_link({ClusterName :: atom(), InitNodes :: [{}]}) -> {ok, pid()}.
 start_link({ClusterName, InitNodes}) ->
-    gen_server:start_link({local, ClusterName}, ?ECREDIS_SERVER, [ClusterName, InitNodes], []).
+    start_link(ClusterName, InitNodes).
+
+
+-spec stop(ClusterName :: atom() | pid()) -> ok.
+stop(ClusterName) when is_atom(ClusterName); is_pid(ClusterName) ->
+    ecredis_server:stop(ClusterName).
 
 
 -spec q(ClusterName :: atom(), Command :: redis_command()) -> redis_result().
@@ -100,10 +134,12 @@ flushdb(ClusterName) ->
 
 %% @doc Return a list of master nodes.
 %% TODO(shashank): modify this to use the ETS table instead of gen_server state
+-spec get_nodes(ClusterName :: atom()) -> [rnode()].
 get_nodes(ClusterName) ->
     ecredis_server:get_node_list(ClusterName).
 
 %% @doc Execute the given commands at the provided node.
+-spec qn(ClusterName :: atom(), Node :: rnode(), Commands :: redis_command()) -> redis_result().
 qn(ClusterName, Node, Commands) ->
     {ok, Pid} = ecredis_server:lookup_eredis_pid(ClusterName, Node),
     Query = #query{
@@ -513,4 +549,3 @@ check_sanity_of_keys(_Query) ->
 %     check_for_moved_errors(Rest);
 % check_for_moved_errors(_) ->
 %     false.
-

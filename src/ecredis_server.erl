@@ -246,7 +246,7 @@ cache_eredis_pids(State, SlotsCache, SlotsMaps, Slot) ->
     Result = lookup_eredis_pid(State#state.cluster_name, SlotsMap#slots_map.node),
     case Result of
         {ok, Pid} ->
-            % TODO: store the version in its own key in the table.begin
+            % TODO: store the version in its own key in the table.
             % Storing the version in each slot makes very expensive to update a single slot, because
             % you have to go and update the versions of each slot. Instead it would make sense to
             % store the version as it's own key in the ets table.

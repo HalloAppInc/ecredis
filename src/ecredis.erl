@@ -476,7 +476,7 @@ throttle_retries(_) ->
 
 
 %% @doc Get the pid associated with the given destination. If we don't have existing connection,
-%% we will call add_note start a new connection.
+%% we will call add_node to start a new connection.
 -spec handle_redirect(Query :: #query{}, RedirectType :: moved | ask, Dest :: binary())
             -> {ok, Slot :: integer(), Pid :: pid(), Version :: integer()} | {error, Reason :: any()}.
 handle_redirect(#query{cluster_name = ClusterName, version = Version}, RedirectType, Dest) ->

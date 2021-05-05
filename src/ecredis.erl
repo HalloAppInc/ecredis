@@ -139,7 +139,7 @@ get_nodes(ClusterName) ->
     ecredis_server:get_node_list(ClusterName).
 
 %% @doc Execute the given command at the provided node.
--spec qn(ClusterName :: atom(), Node :: rnode(), Commands :: redis_command()) -> redis_result().
+-spec qn(ClusterName :: atom(), Node :: rnode(), Command :: redis_command()) -> redis_result().
 qn(ClusterName, Node, Command) ->
     % We use an existing connection to this Node.
     case ecredis_server:get_eredis_pid_by_node(ClusterName, Node) of

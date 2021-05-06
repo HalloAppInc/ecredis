@@ -9,6 +9,18 @@ jobs:
   tests:
     runs-on: ubuntu-latest
     steps:
+      - name: Create code coverage status for the current commit
+        run: |
+          curl "https://{GIT_USER}:${GIT_TOKEN}@api.github.com/repos/${ORG_NAME}/${PROJECT_NAME}/statuses/${COMMIT_SHA}" -d "{\"state\": \"pending\",\"target_url\": \"https://github.com/${ORG_NAME}/${PROJECT_NAME}/pull/${PULL_NUMBER}/checks?check_run_id=${RUN_ID}\",\"description\": \"in progress — This check has started... \",\"context\": \"code cov\"}"
+        env:
+          GIT_TOKEN: ${{ secrets.nikola_github_secret }}
+          GIT_USER: NikolaBorisov
+          ORG_NAME:  HalloAppInc
+          PROJECT_NAME: ecredis
+          COMMIT_SHA: ${{ github.event.pull_request.head.sha }}
+          RUN_ID: ${{ github.run_id }}
+          PULL_NUMBER: ${{ github.event.pull_request.number }}
+
       - name: checkout
         uses: actions/checkout@v2.0.0
 
@@ -46,7 +58,23 @@ jobs:
         uses: actions/upload-artifact@v2
         with:
             name: coverage
+            retention-days: 90
             path: |
                 .eunit/index.html
                 .eunit/*.COVER.html
+
+      - name: Set the code coverage status
+        run: |
+            total=`cat .eunit/index.html | grep "Total" | head -1 | cut -d' ' -f2 | cut -d'%' -f 1`
+            echo "total coverage:  $total"
+
+            curl "https://${GIT_USER}:${GIT_TOKEN}@api.github.com/repos/${ORG_NAME}/${PROJECT_NAME}/statuses/${COMMIT_SHA}" -d "{\"state\": \"success\",\"target_url\": \"https://github.com/${ORG_NAME}/${PROJECT_NAME}/pull/${PULL_NUMBER}/checks?check_run_id=${RUN_ID}\",\"description\": \"${total}%\",\"context\": \"code cov\"}"
+        env:
+          GIT_TOKEN: ${{ secrets.nikola_github_secret }}
+          GIT_USER: NikolaBorisov
+          ORG_NAME:  HalloAppInc
+          PROJECT_NAME: ecredis
+          COMMIT_SHA: ${{ github.event.pull_request.head.sha }}
+          RUN_ID: ${{ github.run_id }}
+          PULL_NUMBER: ${{ github.event.pull_request.number }}
 

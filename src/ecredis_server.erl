@@ -10,9 +10,11 @@
     start_link/2,
     stop/1,
     get_eredis_pid_by_slot/2,
-    lookup_eredis_pid/2,
+    get_eredis_pid_by_node/2,
     remap_cluster/2,
+    handle_moved_async/4,
     get_node_list/1,
+    add_node/2,
     lookup_address_info/2  %% Used for tests only.
 ]).
 
@@ -24,7 +26,7 @@
 
 %% Type definition.
 -record(state, {
-    cluster_name :: string(),
+    cluster_name :: atom(),
     init_nodes = [] :: [#node{}],
     node_list = [] :: [#node{}],
     version = 0 :: integer()  %% Used to avoid unnecessary refresh of Redis slots.
@@ -51,38 +53,96 @@ stop(ClusterName) when is_atom(ClusterName); is_pid(ClusterName) ->
     gen_server:stop(ClusterName).
 
 
--spec get_eredis_pid_by_slot(ClusterName :: atom(), Slot :: integer()) -> 
+% TODO: it would be better if this API returns {ok, Pid, Version} | {error, missing}
+-spec get_eredis_pid_by_slot(ClusterName :: atom(), Slot :: integer()) ->
     {Pid :: pid(), Version :: integer()} | undefined.
 get_eredis_pid_by_slot(ClusterName, Slot) ->
     Result = ets:lookup(ets_table_name(ClusterName, ?SLOT_PIDS), Slot),
     case Result of
         [] -> undefined;
         [{_, Result2}] -> Result2
-    end. 
+    end.
 
+-spec get_eredis_pid_by_node(ClusterName :: atom(), Node :: #node{}) ->
+    {ok, Pid :: pid()} | {error, missing}.
+get_eredis_pid_by_node(ClusterName, Node) ->
+    case ets:lookup(ets_table_name(ClusterName, ?NODE_PIDS),
+            [Node#node.address, Node#node.port]) of
+        [] -> {error, missing};
+        [{_, Pid}] -> {ok, Pid}
+    end.
 
 -spec remap_cluster(ClusterName :: atom(), Version :: integer()) -> {ok, Version :: integer()}.
 remap_cluster(ClusterName, Version) ->
     gen_server:call(ClusterName, {remap_cluster, Version}).
 
+-spec handle_moved_async(ClusterName :: atom(), Version :: integer(),
+        Slot :: integer(), Node :: node())
+            -> {ok, Pid :: pid(), Version :: integer()}.
+handle_moved_async(ClusterName, Version, Slot, Node) ->
+    gen_server:cast(ClusterName, {handle_moved, Version, Slot, Node}).
 
--spec lookup_address_info(ClusterName :: atom(), Pid :: pid()) -> [[term()]]. 
+-spec get_node_list(ClusterName :: atom()) -> [#node{}].
+get_node_list(ClusterName) ->
+    gen_server:call(ClusterName, get_nodes).
+
+% Add a new node to this cluster usually after a MOVED/ASK error. We check if we don't already
+% have a connection, and if not we create a new eredis client and store it in our ets tables.
+-spec add_node(ClusterName :: atom(), Node :: node()) -> {ok, pid()} | {error, any()}.
+add_node(ClusterName, Node) ->
+    gen_server:call(ClusterName, {add_node, Node}).
+
+% FIXME: this function return value is not good. It should be {Host, Port} | {undefined, undefined}
+-spec lookup_address_info(ClusterName :: atom(), Pid :: pid()) -> [[term()]].
 lookup_address_info(ClusterName, Pid) ->
     ets:match(ets_table_name(ClusterName, ?NODE_PIDS), {'$1', Pid}).
 
-
-get_node_list(ClusterName) ->
-    gen_server:call(ClusterName, get_nodes).
 
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 
 -spec remap_cluster_internal(State :: #state{}, Version :: integer()) -> State :: #state{}.
 remap_cluster_internal(State, Version) ->
     if
-       State#state.version == Version ->
-           reload_slots_map(State);
-       true ->
-           State
+        % Version should always be <= the the State#state.version. Its safer to refresh on =<.
+        State#state.version == Version ->
+            reload_slots_map(State);
+        State#state.version < Version ->
+            error_logger:info_msg("Cluster: ~p Version: ~p > state.version ~p",
+                [State#state.cluster_name, Version, State#state.version]),
+            reload_slots_map(State);
+        true ->
+            State
+    end.
+
+-spec handle_moved_internal(State :: #state{}, Version :: integer(),
+        Slot :: integer(), Node :: #node{}) -> ok.
+handle_moved_internal(State, Version, Slot, Node) ->
+    % moved replied imply the move is permanent. Get connection to the new node and update
+    % the slot map for just this node.
+    ClusterName = State#state.cluster_name,
+    % find existing connection or connect to Node
+    case lookup_eredis_pid(ClusterName, Node) of
+        {ok, Pid} ->
+            {CurPid, SlotVersion} = get_eredis_pid_by_slot(ClusterName, Slot),
+            case {Version >= SlotVersion, CurPid =:= Pid} of
+                {true, true} -> ok;
+                {true, false} ->
+                    ets:insert(ets_table_name(ClusterName, ?SLOT_PIDS),
+                        {Slot, {Pid, SlotVersion}}),
+                    OldNode = lookup_address_info(ClusterName, CurPid),
+                    NewNode = lookup_address_info(ClusterName, Pid),
+                    error_logger:info_msg("Cluster: ~p Slot: ~p MOVED ~p -> ~p",
+                        [ClusterName, Slot, OldNode, NewNode]),
+                    % Schedule async full cluster remap. The idea is to be proactive after one move,
+                    % it is likely there are more.
+                    gen_server:cast(ClusterName, {remap_cluster, Version});
+                {false, _} -> ok
+            end;
+        {error, Reason} ->
+            error_logger:error_msg(
+                "Cluster: ~p Error connecting to new Node: ~p:~p Slot:~p moved Reason: ~p",
+                [ClusterName, Node#node.address, Node#node.port, Slot, Reason]),
+            ok
     end.
 
 
@@ -185,7 +245,11 @@ cache_eredis_pids(State, SlotsCache, SlotsMaps, Slot) ->
     SlotsMap = element(RedisNodeIndex, SlotsMaps),
     Result = lookup_eredis_pid(State#state.cluster_name, SlotsMap#slots_map.node),
     case Result of
-        {ok, Pid} -> 
+        {ok, Pid} ->
+            % TODO: store the version in its own key in the table.
+            % Storing the version in each slot makes very expensive to update a single slot, because
+            % you have to go and update the versions of each slot. Instead it would make sense to
+            % store the version as it's own key in the ets table.
             ets:insert(ets_table_name(State#state.cluster_name, ?SLOT_PIDS),
                        {Slot, {Pid, State#state.version}});
         {error, _} ->
@@ -211,22 +275,18 @@ create_ets_tables(ClusterName) ->
 -spec lookup_eredis_pid(ClusterName :: atom(), Node :: #node{}) ->
     {ok, Pid :: pid()} | {error, any()}.
 lookup_eredis_pid(ClusterName, Node) ->
-    Res = ets:lookup(ets_table_name(ClusterName, ?NODE_PIDS),
-                     [Node#node.address, Node#node.port]),  
-    case Res of
-        [] ->
-           Result = safe_eredis_start_link(Node#node.address, Node#node.port),
-           case Result of
-               {ok, Pid} ->
-                   ets:insert(ets_table_name(ClusterName, ?NODE_PIDS),
-                              {[Node#node.address, Node#node.port], Pid}),
-                   {ok, Pid};
-               {error, Reason} ->
-                   error_logger:error_msg("Unable to connect with Redis Node: ~p:~p, Reason: ~p~n",
-                                          [Node#node.address, Node#node.port, Reason]),
-                   {error, Reason}
-            end;
-        [{_, Pid}] -> {ok, Pid}
+    case get_eredis_pid_by_node(ClusterName, Node) of
+        {ok, Pid} -> {ok, Pid};
+        {error, missing} ->
+            case add_node_internal(ClusterName, Node) of
+                {ok, Pid} ->
+                    {ok, Pid};
+                {error, Reason} ->
+                    error_logger:error_msg(
+                        "Cluster: ~p Unable to connect with Redis Node: ~p:~p, Reason: ~p",
+                        [ClusterName, Node#node.address, Node#node.port, Reason]),
+                    {error, Reason}
+            end
     end.
 
 
@@ -244,6 +304,19 @@ safe_eredis_start_link(Ip, Port) ->
     Payload = eredis:start_link(Ip, Port),
     process_flag(trap_exit, false),
     Payload.
+
+% TODO: We need to also add the node to the state.nodes?
+%%% Runs only on the cluster PID.
+-spec add_node_internal(ClusterName :: atom(), Node :: #node{}) -> {ok, pid()} | {error, any()}.
+add_node_internal(ClusterName, Node) ->
+    case safe_eredis_start_link(Node#node.address, Node#node.port) of
+        {ok, Pid} ->
+            ets:insert(ets_table_name(ClusterName, ?NODE_PIDS),
+                {[Node#node.address, Node#node.port], Pid}),
+            {ok, Pid};
+        {error, _Reason} = Err ->
+            Err
+    end.
 
 
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
@@ -267,11 +340,17 @@ init([ClusterName, InitNodes]) ->
 handle_call({remap_cluster, Version}, _From, State) ->
     NewState = remap_cluster_internal(State, Version),
     {reply, {ok, NewState#state.version}, NewState};
+handle_call({add_node, Node}, _From, State) ->
+    ClusterName = State#state.cluster_name,
+    {reply, lookup_eredis_pid(ClusterName, Node), State};
 handle_call(get_nodes, _From, State) ->
     {reply, State#state.node_list, State};
 handle_call(_Request, _From, State) ->
     {reply, ignored, State}.
 
+handle_cast({handle_moved, Version, Slot, Node}, State) ->
+    ok = handle_moved_internal(State, Version, Slot, Node),
+    {noreply, State};
 handle_cast(_Msg, State) ->
     {noreply, State}.
 

@@ -56,12 +56,26 @@ jobs:
 
       - name: Publish coverage report
         uses: actions/upload-artifact@v2
+        if: ${{ always() }}
         with:
             name: coverage
             retention-days: 90
             path: |
                 .eunit/index.html
                 .eunit/*.COVER.html
+
+      - name: Publish Redis Logs
+        uses: actions/upload-artifact@v2
+        if: ${{ always() }}
+        with:
+            name: redis_logs
+            retention-days: 90
+            path: |
+                scripts/30*.log
+                scripts/*.conf
+                .eunit/30*.log
+                .eunit/*.conf
+
 
       - name: Set the code coverage status
         run: |

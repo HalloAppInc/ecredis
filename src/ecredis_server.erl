@@ -131,8 +131,8 @@ handle_moved_internal(State, Version, Slot, Node) ->
                         {Slot, {Pid, SlotVersion}}),
                     OldNode = lookup_address_info(ClusterName, CurPid),
                     NewNode = lookup_address_info(ClusterName, Pid),
-                    error_logger:info_msg("Cluster: ~p Slot: ~p MOVED ~p -> ~p",
-                        [ClusterName, Slot, OldNode, NewNode]),
+                    error_logger:info_msg("Cluster: ~p Slot: ~p MOVED ~p:~p -> ~p:~p",
+                        [ClusterName, Slot, CurPid, OldNode, Pid, NewNode]),
                     % Schedule async full cluster remap. The idea is to be proactive after one move,
                     % it is likely there are more.
                     gen_server:cast(ClusterName, {remap_cluster, Version});
@@ -149,6 +149,8 @@ handle_moved_internal(State, Version, Slot, Node) ->
 %% TODO(vipin): Need to reset connection on Redis node removal.
 -spec reload_slots_map(State :: #state{}) -> State :: #state{}.
 reload_slots_map(State) ->
+    error_logger:info_msg("ecredis reload_slots_map cluster ~p v: ~p",
+        [State#state.cluster_name, State#state.version]),
     ClusterSlots = get_cluster_slots(State#state.cluster_name, State#state.init_nodes),
     SlotsMaps = parse_cluster_slots(ClusterSlots),
     NewState = connect_all_slots(State, SlotsMaps),
@@ -351,6 +353,9 @@ handle_call(_Request, _From, State) ->
 handle_cast({handle_moved, Version, Slot, Node}, State) ->
     ok = handle_moved_internal(State, Version, Slot, Node),
     {noreply, State};
+handle_cast({remap_cluster, Version}, State) ->
+    NewState = remap_cluster_internal(State, Version),
+    {noreply, NewState};
 handle_cast(_Msg, State) ->
     {noreply, State}.
 

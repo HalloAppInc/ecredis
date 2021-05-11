@@ -26,7 +26,8 @@ expand_cluster() ->
     {Pid1, _Version1} = ecredis_server:get_eredis_pid_by_slot(ecredis_a, Slot),
     [[[_Host, Port]]] = ecredis_server:lookup_address_info(ecredis_a, Pid1),
 
-    add_node(30007, 30001),
+    add_node(30007, 30001, true), % master
+    add_node(30008, 30001, false), % slave
     ok = migrate_slot(Slot, Port, 30007),
 
     % our cluster client should still think the key is in the old Pid.
@@ -46,6 +47,7 @@ expand_cluster() ->
 
     ok = migrate_slot(Slot, 30007, Port),
 
+    ok = remove_node(30008, 30001),
     ok = remove_node(30007, 30001),
 
     ok.
@@ -54,7 +56,7 @@ expand_cluster() ->
 % Helper functions
 %==========================================================================================%
 
-add_node(Port, ExistingPort) ->
+add_node(Port, ExistingPort, IsMaster) ->
     cleanup_files(Port),
 
     Cmd = lists:flatten(io_lib:format("redis-server --port ~p --protected-mode yes "
@@ -71,8 +73,12 @@ add_node(Port, ExistingPort) ->
     Cmd2 = "redis-cli --cluster add-node 127.0.0.1:" ++ integer_to_list(Port) ++
         " 127.0.0.1:" ++ integer_to_list(ExistingPort),
 
-    Res2 = os:cmd(Cmd2),
-    ?debugFmt("Add node ~s", [Res2]),
+    Cmd3 = case IsMaster of
+        true -> Cmd2;
+        false -> Cmd2 ++ " --cluster-slave"
+    end,
+    Res3 = os:cmd(Cmd3),
+    ?debugFmt("Add node ~p", [Res3]),
     {ok, NodeId} = eredis:q(C, ["CLUSTER", "MYID"]),
     timer:sleep(500), % wait for the new node to join the cluter
     {ok, Nodes} = eredis:q(C, ["CLUSTER", "NODES"]),

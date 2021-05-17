@@ -133,7 +133,10 @@ migrate_slot(Slot, FromPort, ToPort) ->
     ok = migrate_keys(FromC, Slot, FromPort, ToPort),
 
     {ok, <<"OK">>} = eredis:q(ToC, ["CLUSTER", "SETSLOT", Slot, "NODE", ToId]),
-    {ok, <<"OK">>} = eredis:q(FromC, ["CLUSTER", "SETSLOT", Slot, "NODE", ToId]),
+    % When a master node owns only one slot and it gets migrated out the node becomes a slave
+    % TODO: call SETNODE on all the masters
+    % We only need to do SETSLOT on one of the nodes. https://redis.io/commands/cluster-setslot
+    %%    {ok, <<"OK">>} = eredis:q(FromC, ["CLUSTER", "SETSLOT", Slot, "NODE", ToId]),
     ok.
 
 migrate_keys(FromC, Slot, FromPort, ToPort) ->

@@ -76,6 +76,7 @@ add_node(Port, ExistingPort) ->
     {ok, NodeId} = eredis:q(C, ["CLUSTER", "MYID"]),
     timer:sleep(500), % wait for the new node to join the cluter
     {ok, Nodes} = eredis:q(C, ["CLUSTER", "NODES"]),
+    % TODO: assert the new node is master and is in the nodes reply
     ?debugFmt("Nodes: ~n~s", [Nodes]),
     NodeId.
 
@@ -139,7 +140,7 @@ migrate_slot(Slot, FromPort, ToPort) ->
     ?debugFmt("Migrating keys finished", []),
     {ok, Nodes} = eredis:q(ToC, ["CLUSTER", "NODES"]),
 
-    % Set the slow in the To node
+    % Set the slot in the To node
     {ok, <<"OK">>} = eredis:q(ToC, ["CLUSTER", "SETSLOT", Slot, "NODE", ToId]),
     % Tell all masters about the changes
     % (See very last point https://redis.io/commands/cluster-setslot)

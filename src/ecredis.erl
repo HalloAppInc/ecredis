@@ -1,5 +1,6 @@
 -module(ecredis).
 -include("ecredis.hrl").
+-include("logger.hrl").
 -include_lib("stdlib/include/assert.hrl").
 
 %% API.
@@ -248,7 +249,7 @@ query_by_slot(#query{retries = Retries} = Query) when Retries >= ?REDIS_CLUSTER_
     ecredis_logger:log_error("Max retries reached", Query),
     Query;
 query_by_slot(#query{command = Command, retries = Retries} = Query) ->
-    throttle_retries(Retries),
+    throttle_retries(Retries, Query),
     case get_pid_and_map_version(Query) of
         undefined ->
             ecredis_logger:log_error("Unable to execute - slot has no connection", Query),
@@ -273,7 +274,7 @@ execute_query(#query{retries = Retries} = Query) when Retries >= ?REDIS_CLUSTER_
     ecredis_logger:log_error("Max retries reached", Query),
     Query;
 execute_query(#query{command = Command, retries = Retries, pid = Pid} = Query) ->
-    throttle_retries(Retries),
+    throttle_retries(Retries, Query),
     NewQuery = filter_out_asking_result(Query#query{response = eredis_query(Pid, Command)}),
     case get_successes_and_retries(NewQuery) of
         {_Successes, []} ->
@@ -343,35 +344,48 @@ get_successes_and_retries(#query{response = {error, _}, retries = Retries} = Que
 get_successes_and_retries(#query{
         command = _Command,
         command_type = multi,
-        retries = Retries,
         response = Responses} = Query) when is_list(Responses) ->
     LastResponse = lists:last(Responses),
     MultiRes = case LastResponse of
         {ok, _} ->
             {[Query], []};
-        {error, _} ->
+        {error, <<"EXECABORT ", _/binary>>} ->
             ?assert(length(Responses) > 1),
             %% multi command should behave similar to qp for accessing the error, except it should
             %% fail or succeed as a unit.
             %% e.g.
-            %% [["MULTI"],["GET","{key1}:a"],["EXEC"]]
-            %% -> [{ok, <<"OK">>}, {ok, <<"QUEUED">>}, {ok, [<<"OK">>]}]
-            %% On failure:
-            %% [{ok, <<"OK">>}, {error, <<"ASK 9189 127.0.0.1:30005">>},
+            %% [["MULTI"],["GET","{key1}:a"],["GET","{key1}:b"]["EXEC"]]
+            %% -> [{ok, <<"OK">>}, {ok, <<"QUEUED">>}, {ok, <<"QUEUED">>}, {ok, [<<"1">>, <<"2">>]}]
+            %% On failure you might get something like:
+            %% [{ok, <<"OK">>}, {error, <<"ASK 9189 127.0.0.1:30005">>}, {ok, <<"QUEUED">>},
             %% {error, <<"EXECABORT Transaction discarded because of previous errors.">>}]
-            SecondResponse = lists:nth(2, Responses),
-            case SecondResponse of
+            EarlierResponses = lists:sublist(Responses, length(Responses) - 1),
+            FirstError = lists:foldr(
+                fun
+                    (_Response, {error, _} = Err) ->
+                        Err;
+                    ({error, _} = Err, undefined) ->
+                        Err;
+                    (_, undefined) ->
+                        undefined
+                end,
+                undefined,
+                EarlierResponses),
+
+            case FirstError of
                 {error, <<"MOVED ", Dest/binary>>} ->
                     handle_moved(Query, Dest);
-                {error, <<"ASK ", _Dest/binary>>} ->
-                    ecredis_logger:log_warning("ASK", Query),
-                    %% Converting [["MULTI"],["GET","{key1}:a"],["EXEC"]] into
-                    %% [["MULTI"],["ASKING"] ["GET","{key1}:a"],["EXEC"]] does not seem to work.
-                    %% Will return as a failed query in order to be tried again potentially with
-                    %% "MOVED" in a future request.
-                    {[], [Query#query{retries = Retries + 1}]};
-                {_, _} ->
-                    %% Unknown error, return as is.
+                {error, <<"ASK ", Dest/binary>>} ->
+                    % [["MULTI"],["GET","{key1}:a"],["EXEC"]] should be converted into
+                    % [["ASKING"],["MULTI"],["GET","{key1}:a"],["EXEC"]]
+                    handle_ask(Query, Dest);
+                {error, _} ->
+                    % Unknown error, return as is.
+                    ecredis_logger:log_warning("Unknown error", Query),
+                    {[Query], []};
+                undefined ->
+                    % This is not expected, It looks like we could not find the error.
+                    % but the transaction was aborted because of an error.
                     ecredis_logger:log_warning("Unknown error", Query),
                     {[Query], []}
             end
@@ -421,8 +435,14 @@ handle_ask(#query{command = Command, retries = Retries} = Query, Dest) ->
     ecredis_logger:log_warning("ASK", Query),
     case handle_redirect(Query, ask, Dest) of
         {ok, Slot, Pid, Version} ->
+            Command2 = case Query#query.command_type of
+                multi -> [["ASKING"] | Command];
+                % TODO: likely this is wrong for qp commands also. Add tests for qmn and asking
+                _ -> [["ASKING"], Command]
+            end,
+            ?WARNING("Command (~p) ~p -> ~p", [Query#query.command_type, Command, Command2]),
             {[], [Query#query{
-                command = [["ASKING"], Command],
+                command = Command2,
                 slot = Slot,
                 pid = Pid,
                 retries = Retries + 1,
@@ -472,13 +492,13 @@ eredis_query(Pid, Command) ->
 
 %% @doc If the command is being retried, sleep the process for a little bit to
 %% allow for remapping to occur
--spec throttle_retries(integer()) -> ok.
-throttle_retries(0) ->
+-spec throttle_retries(integer(), any()) -> ok.
+throttle_retries(0, _Query) ->
     ok;
-throttle_retries(N) ->
+throttle_retries(N, Query) ->
     % exponential backoff up to REDIS_MAX_RETRY_DELAY
-    Delay = round(?REDIS_INIT_RETRY_DELAY * math:pow(2, N)),
-    error_logger:info_msg("Sleeping for ~p", [Delay]),
+    Delay = round(?REDIS_INIT_RETRY_DELAY * math:pow(2, N - 1)),
+    ?DEBUG("retrying after ~pms ~p", [Delay, Query#query.command]),
     timer:sleep(erlang:min(Delay, ?REDIS_MAX_RETRY_DELAY)).
 
 
@@ -543,6 +563,10 @@ merge_responses(QueryList) ->
 filter_out_asking_result(#query{query_type = q,
         command = [["ASKING"], Command],
         response = [_AskResponse, Response]} = Query) ->
+    Query#query{command = Command, response = Response};
+filter_out_asking_result(#query{command_type = multi,
+        command = [["ASKING"] | Command],
+        response = [_AskResponse | Response]} = Query) ->
     Query#query{command = Command, response = Response};
 filter_out_asking_result(#query{query_type = QueryType,
         command = Commands, response = Responses} = Query)

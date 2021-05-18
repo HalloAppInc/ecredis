@@ -3,7 +3,9 @@
 -include_lib("eunit/include/eunit.hrl").
 
 setup() ->
-    ecredis_sup:start_link().
+    ecredis_sup:start_link(),
+    lager:start(),
+    ok.
 
 cleanup(_) ->
     ecredis_sup:stop().

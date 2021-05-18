@@ -11,7 +11,9 @@
 
 
 setup() ->
-    ecredis_sup:start_link().
+    ecredis_sup:start_link(),
+    lager:start(),
+    ok.
 
 
 cleanup() ->
@@ -330,7 +332,7 @@ asking_test(ClusterName) ->
     {ok, <<"OK">>} = ecredis:q(ClusterName, ["SET", "{key1}:b", "valueB"]),
 
     % Do the above command using "MULTI".
-    [{ok,<<"OK">>}, {error, _}, {error, _}] =
+    [{ok,<<"OK">>}, {ok, <<"QUEUED">>}, {ok, [<<"OK">>]}] =
         ecredis:q(ClusterName, [["MULTI"], ["SET", "{key1}:b", "valueB"], ["EXEC"]]),
 
     % get the host and port of the destination node

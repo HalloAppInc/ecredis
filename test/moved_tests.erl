@@ -86,17 +86,18 @@ remove_node(Port, _ExisitngPort) ->
     {ok, NodesBin} = eredis:q(C, ["CLUSTER", "NODES"]),
     eredis:stop(C),
     Nodes = parse_nodes(NodesBin),
-    Nodes2 = [HostPort || {_, HostPort, _} <- Nodes],
+    NodesHostPorts = [HostPort || {_, HostPort, _} <- Nodes],
 
     Cmd = "pkill -e -f 'redis-server \\\*:" ++  integer_to_list(Port) ++ "'",
     CmdRes = os:cmd(Cmd),
     ?debugFmt("~p -> ~p", [Cmd, CmdRes]),
 
-    Nodes3 = lists:filter(
+    % remove self
+    NodesHostPorts2 = lists:filter(
         fun
             (undefined) -> false;
             ({_, Port2}) ->  Port2 =/= Port
-        end, Nodes2),
+        end, NodesHostPorts),
 
     lists:foreach(
         fun ({Host, Port2}) ->
@@ -108,7 +109,7 @@ remove_node(Port, _ExisitngPort) ->
                     ok;
                 _ -> ok
             end
-        end, Nodes3),
+        end, NodesHostPorts2),
 
     cleanup_files(Port),
 

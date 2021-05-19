@@ -377,10 +377,9 @@ asking_test(ClusterName) ->
 
     % since the mapping is refreshed, the pids should be equal because we
     % migrated key1 to the node where key2 lives
-    ?assertEqual(
-        get_pid(ClusterName, "key1"),
-        get_pid(ClusterName, "key2")
-    ),
+    {P1, _} = get_pid(ClusterName, "key1"),
+    {P2, _} = get_pid(ClusterName, "key2"),
+    ?assertEqual(P1, P2),
 
     % Now we move MigratingSlot back to PidSrc, so that we don't interfere
     % with other test cases

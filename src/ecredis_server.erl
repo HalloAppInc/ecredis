@@ -57,10 +57,11 @@ stop(ClusterName) when is_atom(ClusterName); is_pid(ClusterName) ->
 -spec get_eredis_pid_by_slot(ClusterName :: atom(), Slot :: integer()) ->
     {Pid :: pid(), Version :: integer()} | undefined.
 get_eredis_pid_by_slot(ClusterName, Slot) ->
-    Result = ets:lookup(ets_table_name(ClusterName, ?SLOT_PIDS), Slot),
+    TName = ets_table_name(ClusterName, ?SLOT_PIDS),
+    Result = ets:lookup(TName, Slot),
     case Result of
         [] -> undefined;
-        [{_, Result2}] -> Result2
+        [{Slot, {Pid, Version}}] -> {Pid, Version}
     end.
 
 -spec get_eredis_pid_by_node(ClusterName :: atom(), Node :: #node{}) ->
@@ -114,8 +115,8 @@ remap_cluster_internal(State, Version) ->
             State
     end.
 
--spec handle_moved_internal(State :: #state{}, Version :: integer(),
-        Slot :: integer(), Node :: #node{}) -> ok.
+-spec handle_moved_internal(State :: state(), Version :: integer(),
+        Slot :: integer(), Node :: #node{}) -> state().
 handle_moved_internal(State, Version, Slot, Node) ->
     % moved replied imply the move is permanent. Get connection to the new node and update
     % the slot map for just this node.
@@ -125,7 +126,7 @@ handle_moved_internal(State, Version, Slot, Node) ->
         {ok, Pid} ->
             {CurPid, SlotVersion} = get_eredis_pid_by_slot(ClusterName, Slot),
             case {Version >= SlotVersion, CurPid =:= Pid} of
-                {true, true} -> ok;
+                {true, true} -> State;
                 {true, false} ->
                     ets:insert(ets_table_name(ClusterName, ?SLOT_PIDS),
                         {Slot, {Pid, SlotVersion}}),
@@ -135,14 +136,15 @@ handle_moved_internal(State, Version, Slot, Node) ->
                         [ClusterName, Slot, CurPid, OldNode, Pid, NewNode]),
                     % Schedule async full cluster remap. The idea is to be proactive after one move,
                     % it is likely there are more.
-                    gen_server:cast(ClusterName, {remap_cluster, Version});
-                {false, _} -> ok
+                    gen_server:cast(ClusterName, {remap_cluster, Version}),
+                    State;
+                {false, _} -> State
             end;
         {error, Reason} ->
             error_logger:error_msg(
                 "Cluster: ~p Error connecting to new Node: ~p:~p Slot:~p moved Reason: ~p",
                 [ClusterName, Node#node.address, Node#node.port, Slot, Reason]),
-            ok
+            State
     end.
 
 
@@ -163,7 +165,7 @@ reload_slots_map(State) ->
     [[binary() | [binary()]]].
 get_cluster_slots(_ClusterName, []) ->
     erlang:error(cannot_connect_to_cluster);
-get_cluster_slots(ClusterName, [Node|T]) ->
+get_cluster_slots(ClusterName, [Node | NodesRest]) ->
     Res = lookup_eredis_pid(ClusterName, Node),
     case Res of
         {ok, Pid} ->
@@ -175,17 +177,22 @@ get_cluster_slots(ClusterName, [Node|T]) ->
             {ok, ClusterInfo} ->
                 ClusterInfo;
             _ ->
-                get_cluster_slots(ClusterName, T)
+                get_cluster_slots(ClusterName, NodesRest)
           end;
         _ ->
-            get_cluster_slots(ClusterName, T)
+            get_cluster_slots(ClusterName, NodesRest)
   end.
 
 
 -spec get_cluster_slots_from_single_node(#node{}) -> [[binary() | [binary()]]].
 get_cluster_slots_from_single_node(Node) ->
-    [[<<"0">>, integer_to_binary(?REDIS_CLUSTER_HASH_SLOTS-1),
-    [list_to_binary(Node#node.address), integer_to_binary(Node#node.port)]]].
+    [
+        [
+            <<"0">>,
+            integer_to_binary(?REDIS_CLUSTER_HASH_SLOTS-1),
+            [list_to_binary(Node#node.address), integer_to_binary(Node#node.port)]
+        ]
+    ].
 
 
 -spec parse_cluster_slots([[binary() | [binary()]]]) -> [#slots_map{}].
@@ -211,9 +218,7 @@ parse_cluster_slots([], _Index, Acc) ->
 -spec connect_all_slots(State :: #state{}, [#slots_map{}]) -> #state{}.
 connect_all_slots(State, SlotsMapList) ->
     [connect_node(State#state.cluster_name, SlotsMap#slots_map.node) || SlotsMap <- SlotsMapList],
-    State#state{
-        version = State#state.version + 1
-    }.
+    increment_version(State).
 
 
 -spec connect_node(ClusterName :: atom(), #node{}) -> ok.
@@ -248,17 +253,19 @@ cache_eredis_pids(State, SlotsCache, SlotsMaps, Slot) ->
     Result = lookup_eredis_pid(State#state.cluster_name, SlotsMap#slots_map.node),
     case Result of
         {ok, Pid} ->
-            % TODO: store the version in its own key in the table.
-            % Storing the version in each slot makes very expensive to update a single slot, because
-            % you have to go and update the versions of each slot. Instead it would make sense to
-            % store the version as it's own key in the ets table.
             ets:insert(ets_table_name(State#state.cluster_name, ?SLOT_PIDS),
-                       {Slot, {Pid, State#state.version}});
+                {Slot, {Pid, State#state.version}});
         {error, _} ->
              %% TODO(vipin): Maybe retry after sometime.
              ok
     end,
     ok.
+
+
+-spec increment_version(State :: state()) -> state().
+increment_version(#state{cluster_name = ClusterName, version = Version} = State) ->
+    ets:insert(ets_table_name(ClusterName, ?SLOT_PIDS), {version, Version + 1}),
+    State#state{version = Version + 1}.
 
 
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
@@ -351,11 +358,11 @@ handle_call(_Request, _From, State) ->
     {reply, ignored, State}.
 
 handle_cast({handle_moved, Version, Slot, Node}, State) ->
-    ok = handle_moved_internal(State, Version, Slot, Node),
-    {noreply, State};
+    State2 = handle_moved_internal(State, Version, Slot, Node),
+    {noreply, State2};
 handle_cast({remap_cluster, Version}, State) ->
-    NewState = remap_cluster_internal(State, Version),
-    {noreply, NewState};
+    State2 = remap_cluster_internal(State, Version),
+    {noreply, State2};
 handle_cast(_Msg, State) ->
     {noreply, State}.
 

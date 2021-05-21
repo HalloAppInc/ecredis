@@ -328,9 +328,13 @@ get_successes_and_retries(#query{response = {error, Reason}, query_type = qn,
     {ok, Pid} = ecredis_server:lookup_eredis_pid(ClusterName, Node),
     ecredis_logger:log_error("Error ~p in query ~p~n", [Reason, Query]),
     {[], [Query#query{retries = Retries + 1, pid = Pid, version = NewVersion}]};
+get_successes_and_retries(#query{response = {error, <<"TRYAGAIN">>}, retries = Retries} = Query) ->
+    % We get TRYAGAIN error if this query is for 2 or more keys on a slot that is being migrated,
+    % and the keys are currently not in the same node.
+    ecredis_logger:log_error("TRYAGAIN error", Query),
+    {[], [Query#query{retries = Retries + 1}]};
 get_successes_and_retries(#query{response = {error, _}, retries = Retries} = Query) ->
     % TODO fill in handlers for other errors, as for when to retry or when to not
-    % - TRYAGAIN should retry
     % - CLUSTERDOWN should retry
     % - tcp_closed?
     % - no_connection?
@@ -471,8 +475,11 @@ eredis_query(Pid, Command) ->
 -spec throttle_retries(integer()) -> ok.
 throttle_retries(0) ->
     ok;
-throttle_retries(_) ->
-    timer:sleep(?REDIS_RETRY_DELAY).
+throttle_retries(N) ->
+    % exponential backoff up to REDIS_MAX_RETRY_DELAY
+    Delay = round(?REDIS_INIT_RETRY_DELAY * math:pow(2, N)),
+    error_logger:info_msg("Sleeping for ~p", [Delay]),
+    timer:sleep(erlang:min(Delay, ?REDIS_MAX_RETRY_DELAY)).
 
 
 %% @doc Get the pid associated with the given destination. If we don't have existing connection,

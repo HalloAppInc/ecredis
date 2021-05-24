@@ -1,4 +1,6 @@
-all:
+all: compile
+
+compile:
 	./rebar compile
 
 clean:
@@ -7,5 +9,10 @@ clean:
 	rm -rf c_src/*.o
 	rm -rf .eunit/
 
-check:
-	./rebar compile eunit
+check: compile test
+
+test:
+	./rebar eunit skip_deps=true
+
+.PHONY: test clean
+

@@ -70,6 +70,7 @@ remove_node(Port, _ExisitngPort) ->
     Nodes = parse_nodes(NodesBin),
     NodesHostPorts = [HostPort || {_, HostPort, _} <- Nodes],
 
+    % kills redis-server running on this port
     Cmd = "pkill -e -f 'redis-server \\\*:" ++  integer_to_list(Port) ++ "'",
     CmdRes = os:cmd(Cmd),
     ?debugFmt("~p -> ~p", [Cmd, CmdRes]),
@@ -137,6 +138,7 @@ migrate_slot(Slot, FromPort, ToPort) ->
     ok.
 
 migrate_keys(FromC, Slot, FromPort, ToPort) ->
+    % get 100 keys that need to be migrated
     {ok, Keys} = eredis:q(FromC, ["CLUSTER", "GETKEYSINSLOT", Slot, 100]),
     case Keys of
         [] -> ok;
@@ -144,6 +146,8 @@ migrate_keys(FromC, Slot, FromPort, ToPort) ->
             lists:foreach(
                 fun (Key) ->
                     ?debugFmt("Migrating ~p:~p from ~p to ~p", [Slot, Key, FromPort, ToPort]),
+                    % 0 is the destination DB
+                    % 5000 is timeout of this operation. More on redis.io
                     Res = eredis:q(FromC, ["MIGRATE", "127.0.0.1", ToPort, Key, 0, 5000]),
                     case Res of
                         {ok, <<"OK">>} -> ok;

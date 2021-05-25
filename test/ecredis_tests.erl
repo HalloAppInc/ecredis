@@ -11,23 +11,53 @@
 
 
 setup() ->
-    ecredis_sup:start_link(),
     lager:start(),
+    ecredis_test_util:start_cluster(),
+    ok = case ecredis:start_link(ecredis_a, [{"127.0.0.1", 30051}]) of
+        {ok, _} -> ok;
+        {error, {already_started, _}} -> ok;
+        Err -> Err
+    end,
+    ok = case ecredis:start_link(ecredis_b, [{"127.0.0.1", 30051}]) of
+        {ok, _} -> ok;
+        {error, {already_started, _}} -> ok;
+        Err2 -> Err2
+    end,
     ok.
 
 
-cleanup() ->
-    ecredis_sup:stop().
+cleanup(_) ->
+    ecredis:stop(ecredis_a),
+    ecredis:stop(ecredis_b),
+    ecredis_test_util:stop_cluster(),
+    ok.
+
+all_test_() ->
+    {inorder,
+        {setup, fun setup/0, fun cleanup/1, [
+            fun get_and_set_a/0,
+            fun binary_a/0,
+            fun delete_a/0,
+            fun pipeline_a/0,
+            fun test_redirect_keeps_pipeline_a/0,
+            fun asking_test_a/0,
+            fun no_dup_after_successful_moved_a/0,
+            fun successful_moved_maintains_oredering_a/0,
+            fun eval_key_a/0,
+            fun eval_sha_a/0,
+            fun bitstring_support_a/0,
+            fun flushdb_zero_dbsize_a/0,
+            fun all_masters_a/0,
+            fun specific_node_a/0,
+            fun qmn_maintains_ordering_a/0,
+            fun init_tests:start_and_stop/0,
+            fun init_tests:stop_by_pid/0
+            ]}}.
 
 
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 %%% get_and_set
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-get_and_set_test() ->
-    setup(),
-    get_and_set_a(),
-    cleanup(). 
-
 get_and_set(ClusterName) ->
     ?assertEqual(
         {ok, <<"OK">>},
@@ -50,11 +80,6 @@ get_and_set_a() ->
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 %%% binary
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-binary_test() ->
-    setup(),
-    binary_a(),
-    cleanup().
-
 binary(ClusterName) ->
     ?assertEqual(
         {ok, <<"OK">>},
@@ -72,38 +97,13 @@ binary(ClusterName) ->
         ])
     ).
 
-%%% Findings
-%%% 
-%%% Q: Does an "ASKING" command cause errors when the slot already belongs to
-%%% the node?
-%%% 
-%%% Motivation: The following situation is possible:
-%%% 
-%%% [{ok, _}, {error, ASK Dest}, {error, ASK Dest}, {error, MOVED Dest}] = [["GET", "{key}1"], ["GET", "{key}2"], ["GET", "{key}3"], ["GET", "{key}4"]]
-%%% 
-%%% The final MOVED response indicated that the slot that {key} hashes to has been fully
-%%% moved to the destination pointed to by Dest. (all destinations are the same since all
-%%% hash to the same slot) When ["GET", "{key}2"], ["GET", "{key}3"] are resent,
-%%% they are prepended with ASKING commands since that was the response they received,
-%%% but the ASKING commands are no longer necessary since the slot now belongs to 
-%%% the Destination node. 
-%%% 
-%%% A: No, it does not. Unnecessary ASKING commands don't cause falures :)
-
-
 binary_a() ->
     binary(ecredis_a).
-
 
 
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 %%% delete
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-delete_test() ->
-    setup(),
-    delete_a(),
-    cleanup().
-
 delete(ClusterName) ->
     ?assertMatch(
         {ok, _},
@@ -126,14 +126,9 @@ delete_a() ->
     delete(ecredis_a).
 
 
-
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 %%% pipeline
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-pipeline_test() ->
-    setup(),
-    pipeline_a(),
-    cleanup().
 
 pipeline(ClusterName) ->
     % qp queries expect all keys to hash to the same slot
@@ -176,14 +171,9 @@ pipeline_a() ->
     pipeline(ecredis_a).
 
 
-
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 %%% test_redirect_keeps_pipeline
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-redirect_keeps_pipeline_test() ->
-    setup(), 
-    test_redirect_keeps_pipeline_a(),
-    cleanup().
 
 test_redirect_keeps_pipeline(ClusterName) ->
     % assert that key and key2 hash to different nodes
@@ -211,8 +201,8 @@ test_redirect_keeps_pipeline(ClusterName) ->
         response = [
             {ok, <<"OK">>},
             {ok, <<"value1">>},
-            {error,<<"MOVED 4998 127.0.0.1:30001">>},
-            {error,<<"MOVED 4998 127.0.0.1:30001">>}
+            {error,<<"MOVED 4998 127.0.0.1:30051">>},
+            {error,<<"MOVED 4998 127.0.0.1:30051">>}
         ],
         slot = Slot1,
         pid = Pid1,
@@ -231,20 +221,11 @@ test_redirect_keeps_pipeline(ClusterName) ->
 test_redirect_keeps_pipeline_a() ->
     test_redirect_keeps_pipeline(ecredis_a).
 
-%% TODO(vipin): The following test needs cluster specific values.
-%% test_redirect_keeps_pipeline_b() ->
-%%    test_redirect_keeps_pipeline(ecredis_b).
-
-
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 %%% asking_test
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-asking_test() ->
-    setup(),
-    asking_test_a(),
-    cleanup().
-
-asking_test(ClusterName) ->
+% TODO: (nikola) Try to integrate this test with the test already in moved_tests
+asking(ClusterName) ->
     % get the slots and pids of key1 and key2
     MigratingSlot = ecredis_command_parser:get_key_slot("key1"),
     {PidSrc, VersionSrc} = get_pid(ClusterName, "key1"),
@@ -452,18 +433,12 @@ asking_test(ClusterName) ->
     ok.
 
 asking_test_a() ->
-    asking_test(ecredis_a).
-
+    asking(ecredis_a).
 
 
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 %%% no_dup_after_successful_moved
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-no_dup_after_successful_moved_test() ->
-    setup(),
-    no_dup_after_successful_moved_a(),
-    cleanup().
-
 no_dup_after_successful_moved(ClusterName) ->
     %% The pipeline will get sent to the node where the first key is stored, causing
     %% the SET query to respond with a MOVED error - the test succeeds if the first
@@ -488,15 +463,9 @@ no_dup_after_successful_moved_a() ->
     no_dup_after_successful_moved(ecredis_a).
 
 
-
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 %%% successful_moved_maintains_ordering
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-successful_moved_maintains_ordering_test() ->
-    setup(),
-    successful_moved_maintains_oredering_a(),
-    cleanup().
-
 successful_moved_maintains_oredering(ClusterName) ->
     ?assertMatch(
         [{ok, _}, {ok, _}, {ok, _}],
@@ -540,35 +509,9 @@ successful_moved_maintains_oredering(ClusterName) ->
 successful_moved_maintains_oredering_a() ->
     successful_moved_maintains_oredering(ecredis_a).
 
-
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-%%% multinode
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-% multinode(ClusterName) ->
-%     N=1000,
-%     Keys = [integer_to_list(I) || I <- lists:seq(1, N)],
-%     [ecredis:q(ClusterName, ["SETEX", Key, "50", Key]) || Key <- Keys],
-%     _ = [{ok, integer_to_binary(list_to_integer(Key) + 1)} || Key <- Keys],
-%     %% ?assertMatch(Guard1, eredis_cluster:qmn([["INCR", Key] || Key <- Keys])),
-%     ecredis:q(ClusterName, ["SETEX", "a", "50", "0"]),
-%     _ = [{ok, integer_to_binary(Key)} || Key <- lists:seq(1, 5)].
-%     %% ?assertMatch(Guard2, eredis_cluster:qmn([["INCR", "a"] || _I <- lists:seq(1,5)]))
- 
-% multinode_a() ->
-%     multinode(ecredis_a).
-
-% multinode_b() ->
-%     multinode(ecredis_b).
-
-
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 %%% eval_key
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-eval_key_test() ->
-    setup(),
-    eval_key_a(),
-    cleanup().
-
 eval_key(ClusterName) ->
     ecredis:q(ClusterName, ["del", "foo"]),
     ecredis:q(ClusterName, ["eval","return redis.call('set', KEYS[1],'bar')", "1", "foo"]),
@@ -581,15 +524,9 @@ eval_key_a() ->
     eval_key(ecredis_a).
 
 
-
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 %%% eval_sha
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-eval_sha_test() ->
-    setup(),
-    eval_sha_a(),
-    cleanup().
-
 eval_sha(ClusterName) ->
     % In this test the key "load" will be used because the "script
     % load" command will be executed in the redis server containing
@@ -614,11 +551,6 @@ eval_sha_a() ->
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 %%% bitstring_support
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-bitstring_support_test() ->
-    setup(),
-    bitstring_support_a(),
-    cleanup().
-
 bitstring_support(ClusterName) ->
     ecredis:q(ClusterName, [<<"set">>, <<"bitstring">>, <<"support">>]),
     ?assertEqual(
@@ -633,11 +565,6 @@ bitstring_support_a() ->
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 %%% flushdb_zero_dbsize
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-flushdb_zero_dbsize_test() ->
-    setup(),
-    flushdb_zero_dbsize_a(),
-    cleanup().
-
 flushdb_zero_dbsize(ClusterName) ->
     get_and_set(ClusterName),
     Sizes = ecredis:qa(ClusterName, ["DBSIZE"]),
@@ -656,11 +583,6 @@ flushdb_zero_dbsize_a() ->
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 %%% all_masters
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-all_masters_test() ->
-    setup(),
-    all_masters_a(),
-    cleanup().
-
 all_masters(ClusterName) ->
     NodeList = ecredis:get_nodes(ClusterName),
     ?assert(length(NodeList) >= 3),
@@ -683,11 +605,6 @@ all_masters_a() ->
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 %%% specific_node
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-specific_node_test() ->
-    setup(),
-    specific_node_a(),
-    cleanup().
-
 specific_node(ClusterName) ->
     get_and_set(ClusterName),
     [First|_] = ecredis:get_nodes(ClusterName),
@@ -705,11 +622,6 @@ specific_node_a() ->
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 %%% qmn_maintains_ordering
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-qmn_maintains_ordering_test() ->
-    setup(),
-    qmn_maintains_ordering_a(),
-    cleanup().
-
 qmn_maintains_ordering(ClusterName) ->
     ecredis:flushdb(ClusterName),
     ?assertMatch(

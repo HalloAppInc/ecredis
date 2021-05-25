@@ -17,7 +17,7 @@ _build/
 _checkouts/
 ebin/
 
-script/*.log
-script/appendonly.*.aof
-script/dump.*.rdb
-script/nodes.*.conf
+scripts/*.log
+scripts/appendonly*.aof
+scripts/dump*.rdb
+scripts/nodes*.conf

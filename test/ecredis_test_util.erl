@@ -17,7 +17,7 @@
     start_cluster/0,
     stop_cluster/0,
     add_node/3,
-    remove_node/2,
+    remove_node/1,
     migrate_slot/3
 ]).
 
@@ -62,7 +62,8 @@ add_node(Port, ExistingPort, IsMaster) ->
     ?debugFmt("Nodes: ~n~s", [Nodes]),
     NodeId.
 
-remove_node(Port, _ExisitngPort) ->
+% Removes the node from the cluster and stops it. Make sure the node is not serving any slots.
+remove_node(Port) ->
     {ok, C} = eredis:start_link("127.0.0.1", Port),
     {ok, NodeId} = eredis:q(C, ["CLUSTER", "MYID"]),
     {ok, NodesBin} = eredis:q(C, ["CLUSTER", "NODES"]),
@@ -195,3 +196,4 @@ cleanup_files() ->
 %%    os:cmd(lists:flatten(io_lib:format(
 %%        "rm nodes-~p.conf appendonly-~p.aof dump-~p.rdb ~p.log", [Port, Port, Port, Port]))),
     ok.
+

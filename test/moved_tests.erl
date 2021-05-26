@@ -52,7 +52,7 @@ expand_cluster() ->
 
     ok = ecredis_test_util:migrate_slot(Slot, 30057, Port),
 
-    ok = ecredis_test_util:remove_node(30058, 30051),
-    ok = ecredis_test_util:remove_node(30057, 30051),
+    ok = ecredis_test_util:remove_node(30058),
+    ok = ecredis_test_util:remove_node(30057),
 
     ok.

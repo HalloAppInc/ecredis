@@ -73,8 +73,6 @@ jobs:
             path: |
                 scripts/30*.log
                 scripts/*.conf
-                .eunit/30*.log
-                .eunit/*.conf
 
 
       - name: Set the code coverage status

@@ -48,8 +48,8 @@ jobs:
       - name: Compile
         run: ./rebar compile
 
-      - name: Start Redis Cluster
-        run: cd scripts; ./create-cluster start; echo yes | ./create-cluster create
+#      - name: Start Redis Cluster
+#        run: cd scripts; ./create-cluster start; echo yes | ./create-cluster create
 
       - name: Tests
         run: ./rebar eunit
@@ -73,8 +73,6 @@ jobs:
             path: |
                 scripts/30*.log
                 scripts/*.conf
-                .eunit/30*.log
-                .eunit/*.conf
 
 
       - name: Set the code coverage status

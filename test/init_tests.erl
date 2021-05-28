@@ -11,7 +11,8 @@
 
 -export([
     start_and_stop/0,
-    stop_by_pid/0
+    stop_by_pid/0,
+    wrong_cluster_name/0
 ]).
 
 -include_lib("eunit/include/eunit.hrl").
@@ -46,5 +47,9 @@ stop_by_pid() ->
     ?assertEqual(true, is_process_alive(Pid)),
     ok = ecredis:stop(Pid),
     ?assertEqual(false, is_process_alive(Pid)),
+    ok.
+
+wrong_cluster_name() ->
+    ?assertError({ecredis_invalid_client, foo}, ecredis:q(foo, ["GET", "foo"])),
     ok.
 

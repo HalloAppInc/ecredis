@@ -55,23 +55,34 @@ stop(ClusterName) when is_atom(ClusterName); is_pid(ClusterName) ->
 
 % TODO: it would be better if this API returns {ok, Pid, Version} | {error, missing}
 -spec get_eredis_pid_by_slot(ClusterName :: atom(), Slot :: integer()) ->
-    {Pid :: pid(), Version :: integer()} | undefined.
+    {Pid :: pid(), Version :: integer()} | undefined | no_return().
 get_eredis_pid_by_slot(ClusterName, Slot) ->
-    TName = ets_table_name(ClusterName, ?SLOT_PIDS),
-    Result = ets:lookup(TName, Slot),
-    case Result of
-        [] -> undefined;
-        [{Slot, {Pid, Version}}] -> {Pid, Version}
+    try
+        TName = ets_table_name(ClusterName, ?SLOT_PIDS),
+        Result = ets:lookup(TName, Slot),
+        case Result of
+            [] -> undefined;
+            [{Slot, {Pid, Version}}] -> {Pid, Version}
+        end
+    catch
+        error : badarg ->
+            erlang:error({ecredis_invalid_client, ClusterName})
     end.
 
 -spec get_eredis_pid_by_node(ClusterName :: atom(), Node :: #node{}) ->
-    {ok, Pid :: pid()} | {error, missing}.
+    {ok, Pid :: pid()} | {error, missing} | no_return().
 get_eredis_pid_by_node(ClusterName, Node) ->
-    case ets:lookup(ets_table_name(ClusterName, ?NODE_PIDS),
-            [Node#node.address, Node#node.port]) of
-        [] -> {error, missing};
-        [{_, Pid}] -> {ok, Pid}
+    try
+        case ets:lookup(ets_table_name(ClusterName, ?NODE_PIDS),
+                [Node#node.address, Node#node.port]) of
+            [] -> {error, missing};
+            [{_, Pid}] -> {ok, Pid}
+        end
+    catch
+        error : badarg ->
+            erlang:error({ecredis_wrong_client, ClusterName})
     end.
+
 
 -spec remap_cluster(ClusterName :: atom(), Version :: integer()) -> {ok, Version :: integer()}.
 remap_cluster(ClusterName, Version) ->

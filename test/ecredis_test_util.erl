@@ -192,8 +192,5 @@ ensure_redis_installed() ->
 
 cleanup_files() ->
     os:cmd("cd ../scripts; ./create-cluster clean"),
-%%    % cleanup any old files for this node.
-%%    os:cmd(lists:flatten(io_lib:format(
-%%        "rm nodes-~p.conf appendonly-~p.aof dump-~p.rdb ~p.log", [Port, Port, Port, Port]))),
     ok.
 

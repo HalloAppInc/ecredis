@@ -51,7 +51,8 @@ all_test_() ->
             fun specific_node_a/0,
             fun qmn_maintains_ordering_a/0,
             fun init_tests:start_and_stop/0,
-            fun init_tests:stop_by_pid/0
+            fun init_tests:stop_by_pid/0,
+            fun init_tests:wrong_cluster_name/0
             ]}}.
 
 

@@ -75,6 +75,7 @@ expand_cluster() ->
     [[[_Host, DestPort]]] = ecredis_server:lookup_address_info(ecredis_test, Pid2),
     ?assertEqual(30057, DestPort),
 
+
     ok = ecredis_test_util:migrate_slot(Slot, 30057, Port),
 
     ok = ecredis_test_util:remove_node(30058),

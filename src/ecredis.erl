@@ -286,6 +286,7 @@ execute_query(#query{command = Command, retries = Retries, pid = Pid} = Query) -
             case check_sanity_of_keys(NewQuery) of
                 ok ->
                     % Reexecute all queries that failed
+                    [ecredis_logger:log_error("Retrying query: ", Q) || Q <- QueriesToResend],
                     NewSuccesses = [execute_query(Q) || Q <- QueriesToResend],
                     % Put the original successes and new successes back in order.
                     % The merging logic is primarily intended for qmn, as qp redirects

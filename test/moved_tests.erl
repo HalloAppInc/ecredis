@@ -21,10 +21,7 @@ all_test_() ->
             ]}}}.
 
 expand_cluster() ->
-    ?assertEqual(
-        {ok, <<"OK">>},
-        ecredis:q(ecredis_test, ["SET", "foo", "bar"])
-    ),
+    ?assertEqual({ok, <<"OK">>}, ecredis:q(ecredis_test, ["SET", "foo", "bar"])),
     ?assertEqual({ok, <<"bar">>}, ecredis:q(ecredis_test, ["GET", "foo"])),
 
     Slot = ecredis_command_parser:get_key_slot("foo"),
@@ -33,7 +30,35 @@ expand_cluster() ->
 
     ecredis_test_util:add_node(30057, 30051, true), % master
     ecredis_test_util:add_node(30058, 30051, false), % slave
-    ok = ecredis_test_util:migrate_slot(Slot, Port, 30057),
+
+    % We start the move. After this command we can get ASKING errors
+    ok = ecredis_test_util:migrate_slot_start(Slot, Port, 30057),
+    % this key has not moved, just making sure it is available.
+    ?assertEqual({ok, <<"bar">>}, ecredis:q(ecredis_test, ["GET", "foo"])),
+
+    % all 3 would cause ASK error because the key does not exist in the old node
+    ?assertEqual({ok, undefined}, ecredis:q(ecredis_test, ["GET", "{foo}100"])),
+    ?assertEqual({ok, <<"OK">>}, ecredis:q(ecredis_test, ["SET", "{foo}100", "bar100"])),
+    ?assertEqual({ok, <<"bar100">>}, ecredis:q(ecredis_test, ["GET", "{foo}100"])),
+
+    % making sure qp works with mix of ask errors and non errors
+    ?assertEqual(
+        [{ok, undefined}, {ok, <<"bar">>}, {ok, <<"bar100">>}],
+        ecredis:qp(ecredis_test, [
+            ["GET", "{foo}99"],  % ASK
+            ["GET", "foo"],      % OK
+            ["GET", "{foo}100"]  % ASK
+        ])),
+
+    % At this time all the keys are copied from the source and dest.
+    ok = ecredis_test_util:migrate_keys(Slot, Port, 30057),
+
+    % after the migration now all the data should be on the To node. Request would still go to the
+    % From node and get redirected with ASK
+    ?assertEqual({ok, <<"bar">>}, ecredis:q(ecredis_test, ["GET", "foo"])),
+    ?assertEqual({ok, <<"bar100">>}, ecredis:q(ecredis_test, ["GET", "{foo}100"])),
+
+    ok = ecredis_test_util:migrate_slot_end(Slot, Port, 30057),
 
     % our cluster client should still think the key is in the old Pid.
     ?assertMatch({Pid1, _}, ecredis_server:get_eredis_pid_by_slot(ecredis_test, Slot)),

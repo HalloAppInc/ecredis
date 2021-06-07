@@ -275,7 +275,9 @@ execute_query(#query{retries = Retries} = Query) when Retries >= ?REDIS_CLUSTER_
     Query;
 execute_query(#query{command = Command, retries = Retries, pid = Pid} = Query) ->
     throttle_retries(Retries, Query),
-    NewQuery = filter_out_asking_result(Query#query{response = eredis_query(Pid, Command)}),
+    % run the query in eredis
+    Result = eredis_query(Pid, Command),
+    NewQuery = filter_out_asking_result(Query#query{response = Result}),
     case get_successes_and_retries(NewQuery) of
         {_Successes, []} ->
             % All commands were successful - return the query as is

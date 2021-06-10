@@ -441,7 +441,6 @@ handle_ask(#query{command = Command, retries = Retries,
         {ok, Slot, Pid, Version} ->
             Command2 = case CommandType of
                 multi -> [["ASKING"] | Command];
-                % TODO: likely this is wrong for qp commands also. Add tests for qmn and asking
                 _ -> [["ASKING"], Command]
             end,
             ?WARNING("Command (~p) ~p -> ~p", [Query#query.command_type, Command, Command2]),

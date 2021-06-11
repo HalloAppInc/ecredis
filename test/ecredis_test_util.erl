@@ -18,7 +18,10 @@
     stop_cluster/0,
     add_node/3,
     remove_node/1,
-    migrate_slot/3
+    migrate_slot/3,
+    migrate_slot_start/3,
+    migrate_slot_end/3,
+    migrate_keys/3
 ]).
 
 start_cluster() ->
@@ -98,7 +101,8 @@ remove_node(Port) ->
     ok.
 
 
-migrate_slot(Slot, FromPort, ToPort) ->
+
+migrate_slot_start(Slot, FromPort, ToPort) ->
     ?debugFmt("migrate ~p from ~p to ~p", [Slot, FromPort, ToPort]),
     {ok, FromC} = eredis:start_link("127.0.0.1", FromPort),
     {ok, ToC} = eredis:start_link("127.0.0.1", ToPort),
@@ -111,10 +115,13 @@ migrate_slot(Slot, FromPort, ToPort) ->
     timer:sleep(1000),
     {ok, <<"OK">>} = eredis:q(ToC, ["CLUSTER", "SETSLOT", Slot, "IMPORTING", FromId]),
     {ok, <<"OK">>} = eredis:q(FromC, ["CLUSTER", "SETSLOT", Slot, "MIGRATING", ToId]),
+    ok = eredis:stop(FromC),
+    ok = eredis:stop(ToC),
+    ok.
 
-    ok = migrate_keys(FromC, Slot, FromPort, ToPort),
-
-    ?debugFmt("Migrating keys finished", []),
+migrate_slot_end(Slot, _FromPort, ToPort) ->
+    {ok, ToC} = eredis:start_link("127.0.0.1", ToPort),
+    {ok, ToId} = eredis:q(ToC, ["CLUSTER", "MYID"]),
     {ok, Nodes} = eredis:q(ToC, ["CLUSTER", "NODES"]),
 
     % Set the slot in the To node
@@ -136,6 +143,20 @@ migrate_slot(Slot, FromPort, ToPort) ->
         Masters),
 
     ?debugFmt("Setslot to node", []),
+    ok.
+
+
+migrate_slot(Slot, FromPort, ToPort) ->
+    ok = migrate_slot_start(Slot, FromPort, ToPort),
+    ok = migrate_keys(Slot, FromPort, ToPort),
+    ok = migrate_slot_end(Slot, FromPort, ToPort),
+    ok.
+
+migrate_keys(Slot, FromPort, ToPort) ->
+    {ok, FromC} = eredis:start_link("127.0.0.1", FromPort),
+    ok = migrate_keys(FromC, Slot, FromPort, ToPort),
+    ok = eredis:stop(FromC),
+    ?debugFmt("Migrating keys finished Slot:~p ~p -> ~p", [Slot, FromPort, ToPort]),
     ok.
 
 migrate_keys(FromC, Slot, FromPort, ToPort) ->

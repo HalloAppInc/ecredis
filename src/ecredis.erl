@@ -286,6 +286,7 @@ execute_query(#query{command = Command, retries = Retries, pid = Pid} = Query) -
             case check_sanity_of_keys(NewQuery) of
                 ok ->
                     % Reexecute all queries that failed
+                    [ecredis_logger:log_error("Retrying query: ", Q) || Q <- QueriesToResend],
                     NewSuccesses = [execute_query(Q) || Q <- QueriesToResend],
                     % Put the original successes and new successes back in order.
                     % The merging logic is primarily intended for qmn, as qp redirects
@@ -431,15 +432,15 @@ handle_moved(#query{retries = Retries} = Query, Dest) ->
 
 
 -spec handle_ask(#query{}, binary()) -> {[#query{}], [#query{}]}.
-handle_ask(#query{command = Command, retries = Retries} = Query, Dest) ->
+handle_ask(#query{command = Command, retries = Retries,
+        command_type = CommandType} = Query, Dest) ->
     % The command's slot is in the process of migration - upate the query to reflect
     % the new pid, prepend the ASKING command, and add the query to the retries list
     ecredis_logger:log_warning("ASK", Query),
     case handle_redirect(Query, ask, Dest) of
         {ok, Slot, Pid, Version} ->
-            Command2 = case Query#query.command_type of
+            Command2 = case CommandType of
                 multi -> [["ASKING"] | Command];
-                % TODO: likely this is wrong for qp commands also. Add tests for qmn and asking
                 _ -> [["ASKING"], Command]
             end,
             ?WARNING("Command (~p) ~p -> ~p", [Query#query.command_type, Command, Command2]),
@@ -466,21 +467,39 @@ group_by_destination(Queries) ->
 %% @doc Add a query to a map. If a query to the same destination already exists,
 %% add the command, response, and index to the query.  
 -spec group_by_destination(#query{}, map()) -> map().
-group_by_destination(#query{command = Command, response = Response, pid = Pid, indices = [Index]} = Query, Map) ->
-    case maps:get(Pid, Map, undefined) of
+group_by_destination(#query{command = [["ASKING"], Command],
+        response = Response, pid = Pid, indices = [Index]} = Query, GroupedCommands) ->
+    case maps:get(Pid, GroupedCommands, undefined) of
+        #query{command = Commands, response = Responses, indices = Indices} ->
+            NewQuery = Query#query{
+                command = [["ASKING"], Command | Commands],
+                response = [Response | Responses],
+                indices = [Index | Indices]
+            },
+            maps:update(Pid, NewQuery, GroupedCommands);
+        undefined ->
+            NewQuery = Query#query{
+                command = [["ASKING"], Command],
+                response = [Response]
+            },
+            maps:put(Pid, NewQuery, GroupedCommands)
+    end;
+group_by_destination(#query{command = Command,
+        response = Response, pid = Pid, indices = [Index]} = Query, GroupedCommands) ->
+    case maps:get(Pid, GroupedCommands, undefined) of
         #query{command = Commands, response = Responses, indices = Indices} ->
             NewQuery = Query#query{
                 command = [Command | Commands],
                 response = [Response | Responses],
                 indices = [Index | Indices]
             },
-            maps:update(Pid, NewQuery, Map);
+            maps:update(Pid, NewQuery, GroupedCommands);
         undefined ->
             NewQuery = Query#query{
                 command = [Command],
                 response = [Response]
             },
-            maps:put(Pid, NewQuery, Map)
+            maps:put(Pid, NewQuery, GroupedCommands)
     end.
 
 

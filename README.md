@@ -11,6 +11,7 @@ implementation. Allows connecting to multiple redis clusters.
 
 * Allows connections to multiple redis clusters at the same time
 * High throughput. The requests are executed directly on the callers process.
+* Uses single eredis connection per node instead of pool of connections.
 
 ## Creating a client
 

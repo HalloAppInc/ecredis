@@ -1,6 +1,8 @@
 -module(ecredis_server).
 -behaviour(gen_server).
 
+-include("logger.hrl").
+
 %% To be used to name the ets tables.
 -define(NODE_PIDS, node_pids).
 -define(SLOT_PIDS, slot_pids).
@@ -374,6 +376,12 @@ handle_cast({handle_moved, Version, Slot, Node}, State) ->
 handle_cast({remap_cluster, Version}, State) ->
     State2 = remap_cluster_internal(State, Version),
     {noreply, State2};
+handle_cast({ping, Ts, Id}, State) ->
+    case whereis(ejabberd_monitor) of
+        undefined -> ?ERROR("ejabberd_monitor unreachable");
+        Pid -> Pid ! {ack, Ts, Id}
+    end,
+    {noreply, State};
 handle_cast(_Msg, State) ->
     {noreply, State}.
 

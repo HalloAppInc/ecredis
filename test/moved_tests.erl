@@ -22,6 +22,9 @@ all_test_() ->
 
 expand_cluster() ->
     ?assertEqual({ok, <<"OK">>}, ecredis:q(ecredis_test, ["SET", "foo", "bar"])),
+    ?assertEqual({ok, <<"OK">>}, ecredis:q(ecredis_test, ["SET", "{foo}1", "bar1"])),
+    ?assertEqual({ok, <<"OK">>}, ecredis:q(ecredis_test, ["SET", "{foo}2", "bar2"])),
+    ?assertEqual({ok, <<"OK">>}, ecredis:q(ecredis_test, ["SET", "{foo}3", "bar3"])),
     ?assertEqual({ok, <<"bar">>}, ecredis:q(ecredis_test, ["GET", "foo"])),
 
     Slot = ecredis_command_parser:get_key_slot("foo"),
@@ -53,6 +56,7 @@ expand_cluster() ->
     % At this time all the keys are copied from the source and dest.
     ok = ecredis_test_util:migrate_keys(Slot, Port, 30057),
 
+
     % after the migration now all the data should be on the To node. Request would still go to the
     % From node and get redirected with ASK
     ?assertEqual({ok, <<"bar">>}, ecredis:q(ecredis_test, ["GET", "foo"])),
@@ -64,6 +68,20 @@ expand_cluster() ->
     ?assertMatch({Pid1, _}, ecredis_server:get_eredis_pid_by_slot(ecredis_test, Slot)),
 
     timer:sleep(500),
+
+    Commands = [
+        ["GET", "{foo}1"],
+        ["GET", "{foo}2"],
+        ["GET", "{foo}3"]
+    ],
+    ExpResults = [
+        {ok, <<"bar1">>},
+        {ok, <<"bar2">>},
+        {ok, <<"bar3">>}
+    ],
+    ?assertEqual(ExpResults,
+        ecredis:qmn(ecredis_test, Commands)),
+
     % get commands should work after a moved
     ?assertEqual({ok, <<"bar">>}, ecredis:q(ecredis_test, ["GET", "foo"])),
 

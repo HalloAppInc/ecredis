@@ -183,16 +183,21 @@ qmn(ClusterName, Commands) ->
 -spec group_commands(Commands :: redis_command(), ClusterName :: atom()) -> list().
 group_commands(Commands, ClusterName) ->
     IndexedCommands = lists:zip(lists:seq(1, length(Commands)), Commands),
-    Queries = lists:map(fun({Index, Command}) -> get_query(Index, Command, ClusterName) end, IndexedCommands),
+    Queries = lists:map(
+        fun({Index, Command}) ->
+            get_query(Index, Command, ClusterName)
+        end,
+        IndexedCommands),
     group_by_destination(Queries).
 
 get_query(Index, Command, ClusterName) ->
     Dest = get_destination(ClusterName, Command),
     case Dest of 
         {error, Reason} ->
-            make_query(ClusterName, qmn, Command, Reason, undefined, Index);
-        {ok, _Slot, Pid, _Version} ->
-            make_query(ClusterName, qmn, Command, undefined, Pid, Index)
+            make_query(ClusterName, qmn, Command, {error, Reason}, undefined, Index);
+        {ok, _Slot, Pid, Version} ->
+            Q = make_query(ClusterName, qmn, Command, undefined, Pid, Index),
+            Q#query{version = Version}
     end.
 
 make_query(ClusterName, QueryType, Command, Response, Pid, Index) ->
@@ -215,6 +220,7 @@ get_destination(ClusterName, Command) ->
             {error, {invalid_cluster_key, Command}};
         Key ->
             Slot = ecredis_command_parser:get_key_slot(Key),
+            % TODO: we should handle undefined
             {Pid, Version} = ecredis_server:get_eredis_pid_by_slot(ClusterName, Slot),
             {ok, Slot, Pid, Version}
     end.
@@ -277,10 +283,16 @@ execute_query(#query{command = Command, retries = Retries, pid = Pid} = Query) -
     throttle_retries(Retries, Query),
     % run the query in eredis
     Result = eredis_query(Pid, Command),
+    case Query#query.query_type =:= qmn of
+        true -> ?INFO("Pid: ~p Commands: ~p, Result: ~p", [Pid, Command, Result]);
+        false -> ok
+    end,
     NewQuery = filter_out_asking_result(Query#query{response = Result}),
+    ecredis_logger:log_info("query execute", NewQuery),
     case get_successes_and_retries(NewQuery) of
         {_Successes, []} ->
             % All commands were successful - return the query as is
+            ecredis_logger:log_info("query execute2", NewQuery),
             NewQuery;
         {Successes, QueriesToResend} ->
             case check_sanity_of_keys(NewQuery) of
@@ -295,7 +307,9 @@ execute_query(#query{command = Command, retries = Retries, pid = Pid} = Query) -
                     % even if it can be more efficiently done for qp
                     {Indices, Response} = merge_responses(NewSuccesses ++ Successes),
                     % Update the query config with the full, ordered set of responses
-                    Query#query{indices = Indices, response = Response};
+                    NewQuery2 = Query#query{indices = Indices, response = Response},
+                    ecredis_logger:log_info("final query", NewQuery2),
+                    NewQuery2;
                 error ->
                     ecredis_logger:log_error("All keys in pipeline command are not mapped to the same slot", Query),
                     NewQuery
@@ -426,6 +440,7 @@ handle_moved(#query{retries = Retries} = Query, Dest) ->
                 version = NewVersion
             }]};
         {error, _Reason} ->
+            ecredis_logger:log_error({handle_moved_error, _Reason}, Query),
             % Unable to connect to the redirect destination. Return the error as-is
             {[Query], []}
     end.
@@ -487,11 +502,12 @@ group_by_destination(#query{command = [["ASKING"], Command],
 group_by_destination(#query{command = Command,
         response = Response, pid = Pid, indices = [Index]} = Query, GroupedCommands) ->
     case maps:get(Pid, GroupedCommands, undefined) of
-        #query{command = Commands, response = Responses, indices = Indices} ->
+        #query{command = Commands, response = Responses, indices = Indices, version = V2} ->
             NewQuery = Query#query{
                 command = [Command | Commands],
                 response = [Response | Responses],
-                indices = [Index | Indices]
+                indices = [Index | Indices],
+                version = erlang:max(V2, Query#query.version)
             },
             maps:update(Pid, NewQuery, GroupedCommands);
         undefined ->
@@ -542,9 +558,13 @@ handle_redirect(#query{cluster_name = ClusterName, version = Version}, RedirectT
             % this is gen_server call, adding the node happens on the ecredis_server process
             case ecredis_server:add_node(ClusterName, Node) of
                 {ok, Pid} ->
+                    ?INFO("connected to new node cluster: ~p, Node: ~p, Pid: ~p",
+                        [ClusterName, Node, Pid]),
                     % TODO: maybe in the future the version should increment when a new node is added
                     {ok, Slot, Pid, Version};
                 {error, _Reason} = Err ->
+                    ?ERROR("failed to add node cluster: ~p Node: ~p Error: ~p",
+                        [ClusterName, Node, Err]),
                     Err
             end
     end,

@@ -34,6 +34,9 @@ start_cluster() ->
 stop_cluster() ->
     Res = os:cmd("cd ../scripts; ./create-cluster stop"),
     ?debugFmt("cluster stop: ~s", [Res]),
+    % TODO: we should force kill new nodes
+    Res2 = os:cmd("cd ../scripts; rm *.log; rm *.aof; rm *.rdb; rm *.conf"),
+    ?debugFmt("cleanup stop: ~s", [Res2]),
     ok.
 
 add_node(Port, ExistingPort, IsMaster) ->
@@ -75,7 +78,8 @@ remove_node(Port) ->
     NodesHostPorts = [HostPort || {_, HostPort, _} <- Nodes],
 
     % kills redis-server running on this port
-    Cmd = "pkill -e -f 'redis-server \\\*:" ++  integer_to_list(Port) ++ "'",
+    Cmd = "pkill -e -9 -f 'redis-server \\\*:" ++  integer_to_list(Port) ++ "'",
+    ?debugVal(Cmd),
     CmdRes = os:cmd(Cmd),
     ?debugFmt("~p -> ~p", [Cmd, CmdRes]),
 

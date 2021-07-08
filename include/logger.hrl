@@ -27,3 +27,10 @@
 
 -define(ERROR(Format, Args),
     begin lager:error([{fmt, Format}, {args, Args}], Format, Args), ok end).
+
+
+-define(CRITICAL(Format),
+    begin lager:critical(Format, []), ok end).
+
+-define(CRITICAL(Format, Args),
+    begin lager:critical([{fmt, Format}, {args, Args}], Format, Args), ok end).

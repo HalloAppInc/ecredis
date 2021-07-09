@@ -21,3 +21,8 @@ scripts/*.log
 scripts/appendonly*.aof
 scripts/dump*.rdb
 scripts/nodes*.conf
+
+# ide stuff
+.idea
+ecredis.iml
+

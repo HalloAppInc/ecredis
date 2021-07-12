@@ -343,11 +343,11 @@ get_successes_and_retries(#query{response = {error, no_connection},
     {ok, _RemapNewVersion} = remap_cluster(Query),
     case get_pid_and_map_version(Query) of
         {Pid, NewVersion} ->
-            ecredis_logger:log_error("Error no_connection ~p Pid ~p -> ~p in query ~p~n",
+            ?ERROR("Error no_connection ~p Pid ~p -> ~p in query ~p~n",
                 [ClusterName, OldPid, Pid, Query]),
             {[], [Query#query{retries = Retries + 1, pid = Pid, version = NewVersion}]};
         undefined ->
-            ecredis_logger:log_error("Error no_connection ~p no pid for query after remap ~p~n",
+            ?ERROR("Error no_connection ~p no pid for query after remap ~p~n",
                 [ClusterName, Query]),
             {[], [Query#query{retries = Retries + 1}]}
     end;

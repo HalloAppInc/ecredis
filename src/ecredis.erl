@@ -46,16 +46,55 @@
         InitNode :: {Host, Port},
         Host :: string(),
         Port :: integer().
-start_link(ClusterName, InitNodes)
-        when is_atom(ClusterName), is_list(InitNodes), length(InitNodes) > 0 ->
-    ecredis_server:start_link(ClusterName, InitNodes);
-start_link(ClusterName, _) when not is_atom(ClusterName) ->
+start_link(ClusterName, InitNodes) ->
+    start_link(ClusterName, InitNodes, []).
+
+
+%% @doc Start Redis Cluster client. ClusterName should be atom representing the name
+%% of this Redis Cluster client. This name should be based in future calls to q() API.
+%% InitNodes is a list of initial nodes to connect to. Options is a list of options:
+%% <dl>
+%% <dt>`{host, Host}'</dt><dd>DNS name or IP address as string; or unix domain
+%% socket as `{local, Path}' (available in OTP 19+); default `"127.0.0.1"'</dd>
+%% <dt>`{port, Port}'</dt><dd>Integer, default is 6379</dd>
+%% <dt>`{database, Database}'</dt><dd>Integer (or string containing a number);
+%% 0 for default database</dd>
+%% <dt>`{username, Username}'</dt><dd>String; default: no username</dd>
+%% <dt>`{password, Password}'</dt><dd>String; default: no password</dd>
+%% <dt>`{reconnect_sleep, ReconnectSleep}'</dt><dd>Integer of milliseconds to
+%% sleep between reconnect attempts; default: 100</dd>
+%% <dt>`{connect_timeout, Timeout}'</dt><dd>Timeout value in milliseconds to use
+%% when connecting to Redis; default: 5000</dd>
+%% <dt>`{socket_options, SockOpts}'</dt><dd>List of
+%% <a href="https://erlang.org/doc/man/gen_tcp.html">gen_tcp options</a> used
+%% when connecting the socket; default is `?SOCKET_OPTS'</dd>
+%% <dt>`{tls, TlsOpts}'</dt><dd>Enabling TLS and a list of
+%% <a href="https://erlang.org/doc/man/ssl.html">ssl options</a>; used when
+%% establishing a TLS connection; default is off</dd>
+%% <dt>`{name, Name}'</dt><dd>Tuple to register the client with a name
+%% such as `{local, atom()}'; for all options see `ServerName' at
+%% <a href="https://erlang.org/doc/man/gen_server.html#start_link-4">gen_server:start_link/4</a>;
+%% default: no name</dd>
+%% </dl>
+-spec start_link(ClusterName, InitNodes, Options) -> {ok, pid()} when
+    ClusterName :: atom(),
+    InitNodes :: list(InitNode),
+    InitNode :: {Host, Port},
+    Host :: string(),
+    Port :: integer(),
+    Options :: proplists:proplist().
+start_link(ClusterName, InitNodes, Options)
+        when is_atom(ClusterName), is_list(InitNodes), is_list(Options), length(InitNodes) > 0 ->
+    ecredis_server:start_link(ClusterName, InitNodes, Options);
+start_link(ClusterName, _, _) when not is_atom(ClusterName) ->
     error({badarg, ClusterName, "must be atom"});
-start_link(_, InitNodes) when not is_list(InitNodes) ->
+start_link(_, InitNodes, _) when not is_list(InitNodes) ->
     error({badarg, InitNodes, "must be list"});
-start_link(_, InitNodes) when is_list(InitNodes), length(InitNodes) =:= 0 ->
+start_link(_, InitNodes, _) when is_list(InitNodes), length(InitNodes) =:= 0 ->
     error({badarg, InitNodes, "must not be empty"});
-start_link(_, _) ->
+start_link(_, _, Options) when not is_list(Options) ->
+    error({badarg, Options, "must be list"});
+start_link(_, _, _) ->
     error(badarg).
 
 

@@ -8,6 +8,7 @@
 %% API.
 -export([
     start_link/2,
+    start_link/3,
     stop/1,
     get_eredis_pid_by_slot/2,
     get_eredis_pid_by_node/2,
@@ -29,7 +30,8 @@
     cluster_name :: atom(),
     init_nodes = [] :: [#node{}],
     node_list = [] :: [#node{}],
-    version = 0 :: integer()  %% Used to avoid unnecessary refresh of Redis slots.
+    version = 0 :: integer(),  %% Used to avoid unnecessary refresh of Redis slots.
+    options = [] :: proplists:proplist()
 }).
 
 -type state() :: #state{}.
@@ -45,7 +47,18 @@
         Host :: string(),
         Port :: integer().
 start_link(ClusterName, InitNodes) ->
-    gen_server:start_link({local, ClusterName}, ?MODULE, [ClusterName, InitNodes], []).
+    start_link(ClusterName, InitNodes, []).
+
+
+-spec start_link(ClusterName, InitNodes, Options) -> {ok, pid()} when
+    ClusterName :: atom(),
+    InitNodes :: list(InitNode),
+    InitNode :: {Host, Port},
+    Host :: string(),
+    Port :: integer(),
+    Options :: proplists:proplist().
+start_link(ClusterName, InitNodes, Options) ->
+    gen_server:start_link({local, ClusterName}, ?MODULE, [ClusterName, InitNodes, Options], []).
 
 
 -spec stop(ClusterName :: atom() | pid()) -> ok.
@@ -228,14 +241,15 @@ parse_cluster_slots([], _Index, Acc) ->
 
 -spec connect_all_slots(State :: #state{}, [#slots_map{}]) -> #state{}.
 connect_all_slots(State, SlotsMapList) ->
-    [connect_node(State#state.cluster_name, SlotsMap#slots_map.node) || SlotsMap <- SlotsMapList],
+    [connect_node(State#state.cluster_name, SlotsMap#slots_map.node, State#state.options)
+        || SlotsMap <- SlotsMapList],
     increment_version(State).
 
 
--spec connect_node(ClusterName :: atom(), #node{}) -> ok.
-connect_node(ClusterName, Node) ->
+-spec connect_node(ClusterName :: atom(), #node{}, Options :: proplists:proplist()) -> ok.
+connect_node(ClusterName, Node, Options) ->
     %% Will make an attempt to connect if no connection already present.
-    lookup_eredis_pid(ClusterName, Node),
+    lookup_eredis_pid(ClusterName, Node, Options),
     ok.
 
 
@@ -295,10 +309,16 @@ create_ets_tables(ClusterName) ->
 -spec lookup_eredis_pid(ClusterName :: atom(), Node :: #node{}) ->
     {ok, Pid :: pid()} | {error, any()}.
 lookup_eredis_pid(ClusterName, Node) ->
+    lookup_eredis_pid(ClusterName, Node, []).
+
+
+-spec lookup_eredis_pid(ClusterName :: atom(), Node :: #node{}, Options :: proplists:proplist()) ->
+    {ok, Pid :: pid()} | {error, any()}.
+lookup_eredis_pid(ClusterName, Node, Options) ->
     case get_eredis_pid_by_node(ClusterName, Node) of
         {ok, Pid} -> {ok, Pid};
         {error, missing} ->
-            case add_node_internal(ClusterName, Node) of
+            case add_node_internal(ClusterName, Node, Options) of
                 {ok, Pid} ->
                     {ok, Pid};
                 {error, Reason} ->
@@ -315,21 +335,22 @@ ets_table_name(ClusterName, Purpose) ->
         ++ "." ++ atom_to_list(?MODULE)).
 
 
-safe_eredis_start_link(Ip, Port) ->
+safe_eredis_start_link(Ip, Port, Options) ->
     %% eredis client's gen_server terminates if it is unable to connect with redis. We trap the
     %% exit signal just so ecredis process also does not terminate. Returned error needs to be
     %% handled by the caller.
     %% Refer: https://medium.com/erlang-battleground/the-unstoppable-exception-9dfb009852f5
     process_flag(trap_exit, true),
-    Payload = eredis:start_link(Ip, Port),
+    Payload = eredis:start_link(Ip, Port, Options),
     process_flag(trap_exit, false),
     Payload.
 
 % TODO: We need to also add the node to the state.nodes?
 %%% Runs only on the cluster PID.
--spec add_node_internal(ClusterName :: atom(), Node :: #node{}) -> {ok, pid()} | {error, any()}.
-add_node_internal(ClusterName, Node) ->
-    case safe_eredis_start_link(Node#node.address, Node#node.port) of
+-spec add_node_internal(ClusterName :: atom(), Node :: #node{}, Options :: proplists:proplist()) ->
+    {ok, pid()} | {error, any()}.
+add_node_internal(ClusterName, Node, Options) ->
+    case safe_eredis_start_link(Node#node.address, Node#node.port, Options) of
         {ok, Pid} ->
             ets:insert(ets_table_name(ClusterName, ?NODE_PIDS),
                 {[Node#node.address, Node#node.port], Pid}),
@@ -344,7 +365,7 @@ add_node_internal(ClusterName, Node) ->
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 
 
-init([ClusterName, InitNodes]) ->
+init([ClusterName, InitNodes, Options]) ->
     create_ets_tables(ClusterName),
     InitNodes2 = [#node{address = Address, port = Port} || {Address, Port} <- InitNodes],
 
@@ -352,7 +373,8 @@ init([ClusterName, InitNodes]) ->
         cluster_name = ClusterName,
         init_nodes = InitNodes2,
         node_list = [],
-        version = 0
+        version = 0,
+        options = Options
     },
     {ok, reload_slots_map(State)}.
 

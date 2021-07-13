@@ -337,6 +337,20 @@ get_successes_and_retries(#query{response = {error, <<"TRYAGAIN">>}, retries = R
     % and the keys are currently not in the same node.
     ecredis_logger:log_error("TRYAGAIN error", Query),
     {[], [Query#query{retries = Retries + 1}]};
+get_successes_and_retries(#query{response = {error, no_connection},
+    cluster_name = ClusterName, retries = Retries, pid = OldPid} = Query) ->
+    % TODO: maybe it is too much to do a remap on every no_connection?
+    {ok, _RemapNewVersion} = remap_cluster(Query),
+    case get_pid_and_map_version(Query) of
+        {Pid, NewVersion} ->
+            ?ERROR("Error no_connection ~p Pid ~p -> ~p in query ~p~n",
+                [ClusterName, OldPid, Pid, Query]),
+            {[], [Query#query{retries = Retries + 1, pid = Pid, version = NewVersion}]};
+        undefined ->
+            ?ERROR("Error no_connection ~p no pid for query after remap ~p~n",
+                [ClusterName, Query]),
+            {[], [Query#query{retries = Retries + 1}]}
+    end;
 get_successes_and_retries(#query{response = {error, _}, retries = Retries} = Query) ->
     % TODO fill in handlers for other errors, as for when to retry or when to not
     % - CLUSTERDOWN should retry

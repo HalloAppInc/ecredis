@@ -374,6 +374,9 @@ handle_cast({handle_moved, Version, Slot, Node}, State) ->
 handle_cast({remap_cluster, Version}, State) ->
     State2 = remap_cluster_internal(State, Version),
     {noreply, State2};
+handle_cast({ping, Id, Ts, From}, State) ->
+    From ! {ack, Id, Ts, self()},
+    {noreply, State};
 handle_cast(_Msg, State) ->
     {noreply, State}.
 

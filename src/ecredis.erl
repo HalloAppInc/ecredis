@@ -337,25 +337,13 @@ get_successes_and_retries(#query{response = {error, <<"TRYAGAIN">>}, retries = R
     % and the keys are currently not in the same node.
     ecredis_logger:log_error("TRYAGAIN error", Query),
     {[], [Query#query{retries = Retries + 1}]};
-get_successes_and_retries(#query{response = {error, no_connection},
-    cluster_name = ClusterName, retries = Retries, pid = OldPid} = Query) ->
-    % TODO: maybe it is too much to do a remap on every no_connection?
-    {ok, _RemapNewVersion} = remap_cluster(Query),
-    case get_pid_and_map_version(Query) of
-        {Pid, NewVersion} ->
-            ?ERROR("Error no_connection ~p Pid ~p -> ~p in query ~p~n",
-                [ClusterName, OldPid, Pid, Query]),
-            {[], [Query#query{retries = Retries + 1, pid = Pid, version = NewVersion}]};
-        undefined ->
-            ?ERROR("Error no_connection ~p no pid for query after remap ~p~n",
-                [ClusterName, Query]),
-            {[], [Query#query{retries = Retries + 1}]}
-    end;
+get_successes_and_retries(#query{response = {error, no_connection}} = Query) ->
+    handle_error(no_connection, Query);
+get_successes_and_retries(#query{response = {error, <<"CLUSTERDOWN Hash slot not served">>}} = Query) ->
+    handle_error(cluster_down, Query);
 get_successes_and_retries(#query{response = {error, _}, retries = Retries} = Query) ->
     % TODO fill in handlers for other errors, as for when to retry or when to not
-    % - CLUSTERDOWN should retry
     % - tcp_closed?
-    % - no_connection?
     ecredis_logger:log_error("Other error", Query),
     {[], [Query#query{retries = Retries + 1}]};
 get_successes_and_retries(#query{
@@ -470,6 +458,20 @@ handle_ask(#query{command = Command, retries = Retries,
             {[Query], []}
     end.
 
+-spec handle_error(Error :: atom(), Query :: #query{}) -> {[#query{}], [#query{}]}.
+handle_error(Error,
+        #query{cluster_name = ClusterName, slot = Slot, retries = Retries, pid = OldPid} = Query) ->
+    {ok, RemapNewVersion} = remap_cluster(Query),
+    case get_pid_and_map_version(Query) of
+        {Pid, NewVersion} ->
+            ?ERROR("Error ~p ~p Slot: ~p Pid ~p -> ~p in query ~p~n",
+                [Error, ClusterName, Slot, OldPid, Pid, Query]),
+            {[], [Query#query{retries = Retries + 1, pid = Pid, version = NewVersion}]};
+        undefined ->
+            ?ERROR("Error ~p ~p no pid for query after remap ~p~n",
+                [Error, ClusterName, Query]),
+            {[], [Query#query{retries = Retries + 1, version = RemapNewVersion}]}
+    end.
 
 %% @doc Merge a list of queries into a list of queries where each destination is
 %% unique. If two queries in the original list have the same destination, they become

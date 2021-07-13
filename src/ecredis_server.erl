@@ -1,8 +1,6 @@
 -module(ecredis_server).
 -behaviour(gen_server).
 
--include("logger.hrl").
-
 %% To be used to name the ets tables.
 -define(NODE_PIDS, node_pids).
 -define(SLOT_PIDS, slot_pids).

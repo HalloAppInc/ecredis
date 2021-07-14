@@ -310,7 +310,7 @@ query_by_slot(#query{command = Command, retries = Retries} = Query) ->
 -spec execute_query(#query{}) -> #query{}.
 execute_query(#query{retries = Retries} = Query) when Retries >= ?REDIS_CLUSTER_REQUEST_TTL ->
     % Recursion depth is reached - return the most recent error
-    ecredis_logger:log_error("Max retries reached", Query),
+    ecredis_logger:log_error("Query FAILED. Max retries reached", Query),
     Query;
 execute_query(#query{command = Command, retries = Retries, pid = Pid} = Query) ->
     throttle_retries(Retries, Query),
@@ -325,7 +325,7 @@ execute_query(#query{command = Command, retries = Retries, pid = Pid} = Query) -
             case check_sanity_of_keys(NewQuery) of
                 ok ->
                     % Reexecute all queries that failed
-                    [ecredis_logger:log_error("Retrying query: ", Q) || Q <- QueriesToResend],
+                    [ecredis_logger:log_warning("Retrying query: ", Q) || Q <- QueriesToResend],
                     NewSuccesses = [execute_query(Q) || Q <- QueriesToResend],
                     % Put the original successes and new successes back in order.
                     % The merging logic is primarily intended for qmn, as qp redirects

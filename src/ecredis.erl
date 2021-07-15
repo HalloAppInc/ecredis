@@ -21,7 +21,8 @@
 -export([
     query_by_slot/1,
     execute_query/1,
-    get_successes_and_retries/1
+    get_successes_and_retries/1,
+    index_responses/1
 ]).
 -endif.
 
@@ -595,8 +596,8 @@ handle_redirect(#query{cluster_name = ClusterName, version = Version}, RedirectT
 %% @doc Use the indices list from a query to tag each of the responses.
 -spec index_responses(#query{}) -> [{integer(), redis_result()}].
 index_responses(#query{response = {error, _} = Response, indices = Indices})
-        when size(Indices) > 1 ->
-    lists:zip(Indices, lists:duplicate(size(Indices), Response));
+        when length(Indices) > 1 ->
+    lists:zip(Indices, lists:duplicate(length(Indices), Response));
 index_responses(#query{response = Responses, indices = Indices})
         when is_list(Responses) ->
     lists:zip(Indices, Responses);

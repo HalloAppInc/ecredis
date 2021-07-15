@@ -52,7 +52,8 @@ all_test_() ->
             fun qmn_maintains_ordering_a/0,
             fun init_tests:start_and_stop/0,
             fun init_tests:stop_by_pid/0,
-            fun init_tests:wrong_cluster_name/0
+            fun init_tests:wrong_cluster_name/0,
+            fun index_responses_tests/0
             ]}}.
 
 
@@ -662,6 +663,43 @@ qmn_maintains_ordering(ClusterName) ->
 qmn_maintains_ordering_a() ->
     qmn_maintains_ordering(ecredis_a).
 
+
+index_responses_tests() ->
+    Query = #query{
+        indices = [2,4,6],
+        command = [a, b, c],
+        response = {error, no_connection}
+    },
+    ?assertEqual(
+        [
+            {2, {error, no_connection}},
+            {4, {error, no_connection}},
+            {6, {error, no_connection}}
+        ],
+        ecredis:index_responses(Query)),
+
+    Query2 = #query{
+        indices = [1],
+        command = a,
+        response = a_resp
+    },
+
+    ?assertEqual([{1, a_resp}], ecredis:index_responses(Query2)),
+
+    Query3 = Query#query{
+        response = [{ok, <<"1">>}, {ok, <<"0">>}, {ok, <<"1">>}]
+    },
+
+    ?assertEqual(
+        [
+            {2, {ok, <<"1">>}},
+            {4, {ok, <<"0">>}},
+            {6, {ok, <<"1">>}}
+        ], ecredis:index_responses(Query3)),
+    ok.
+
+
+
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 %%% internal helper functions
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
@@ -688,4 +726,5 @@ total_keys({ok, Entry}, SoFar) ->
     SoFar + length(Entry);
 total_keys([{ok, First}|Rest], SoFar) ->
     total_keys(Rest, length(First) + SoFar).
+
 

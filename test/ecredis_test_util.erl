@@ -27,18 +27,18 @@
 start_cluster() ->
     ensure_redis_installed(),
     cleanup_files(),
-    Res = os:cmd("cd ../scripts; ./create-cluster start; echo yes | ./create-cluster create"),
+    Res = os:cmd("cd scripts; ./create-cluster start; echo yes | ./create-cluster create"),
     ?debugFmt("cluster start: ~s", [Res]),
     ok.
 
 stop_cluster() ->
-    Res = os:cmd("cd ../scripts; ./create-cluster stop"),
+    Res = os:cmd("cd scripts; ./create-cluster stop"),
     ?debugFmt("cluster stop: ~s", [Res]),
     ok.
 
 add_node(Port, ExistingPort, IsMaster) ->
 
-    Cmd = lists:flatten(io_lib:format("cd ../scripts; redis-server --port ~p --protected-mode yes "
+    Cmd = lists:flatten(io_lib:format("cd scripts; redis-server --port ~p --protected-mode yes "
     "--cluster-enabled yes --appendonly yes "
     "--appendfilename appendonly-~p.aof --dbfilename dump-~p.rdb "
     "--cluster-config-file nodes-~p.conf "
@@ -212,6 +212,6 @@ ensure_redis_installed() ->
 
 
 cleanup_files() ->
-    os:cmd("cd ../scripts; ./create-cluster clean"),
+    os:cmd("cd scripts; ./create-cluster clean"),
     ok.
 

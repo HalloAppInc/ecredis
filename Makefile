@@ -1,18 +1,16 @@
 all: compile
 
 compile:
-	./rebar compile
+	./rebar3 compile
 
 clean:
-	./rebar clean
-	rm -rf priv/*.so
-	rm -rf c_src/*.o
-	rm -rf .eunit/
+	./rebar3 clean
+	rm -rf log
 
 check: compile test
 
 test:
-	./rebar eunit skip_deps=true
+	./rebar3 eunit
 
 .PHONY: test clean
 

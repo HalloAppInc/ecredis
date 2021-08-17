@@ -42,17 +42,11 @@ jobs:
             token: ${{ secrets.nikola_github_secret }}
             path: deps/ecredis_crc16
 
-      - name: Prepare Deps
-        run: ./rebar prepare-deps
-
       - name: Compile
-        run: ./rebar compile
-
-#      - name: Start Redis Cluster
-#        run: cd scripts; ./create-cluster start; echo yes | ./create-cluster create
+        run: ./rebar3 compile
 
       - name: Tests
-        run: ./rebar eunit
+        run: ./rebar3 eunit
 
       - name: Publish coverage report
         uses: actions/upload-artifact@v2

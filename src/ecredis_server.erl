@@ -172,7 +172,6 @@ handle_moved_internal(State, Version, Slot, Node) ->
     end.
 
 
-%% TODO(vipin): Need to reset connection on Redis node removal.
 -spec reload_slots_map(State :: #state{}) -> State :: #state{}.
 reload_slots_map(State) ->
     error_logger:info_msg("ecredis reload_slots_map cluster ~p v: ~p",
@@ -182,6 +181,8 @@ reload_slots_map(State) ->
     NewState = connect_all_slots(State, SlotsMaps),
     create_eredis_pids_cache(NewState, SlotsMaps),
     NodeList = [SlotsMap#slots_map.node || SlotsMap <- SlotsMaps],
+    OldNodeList = State#state.node_list,
+    check_and_disconnect_old_nodes(State#state.cluster_name, OldNodeList, NodeList),
     NewState#state{node_list = NodeList}.
 
 
@@ -252,6 +253,27 @@ connect_node(ClusterName, Node, Options) ->
     lookup_eredis_pid(ClusterName, Node, Options),
     ok.
 
+check_and_disconnect_old_nodes(ClusterName, OldNodeList, NewNodeList) ->
+    NewNodeSet = sets:from_list(NewNodeList),
+    OldNodeSet = sets:from_list(OldNodeList),
+    DisconnectNodes = sets:to_list(sets:subtract(OldNodeSet, NewNodeSet)),
+
+    lists:foreach(
+        fun (Node) -> disconnect_node(ClusterName, Node) end,
+        DisconnectNodes).
+
+disconnect_node(ClusterName, Node) ->
+    error_logger:info_msg("~p disconnecting from node: ~p", [ClusterName, Node]),
+    case get_eredis_pid_by_node(ClusterName, Node) of
+        {ok, Pid} ->
+            ets:delete(ets_table_name(ClusterName, ?NODE_PIDS),
+                [Node#node.address, Node#node.port]),
+            eredis:stop(Pid);
+        {error, missing} ->
+            error_logger:info_msg("~p disconnecting from node: ~p - not found",
+                [ClusterName, Node])
+    end,
+    ok.
 
 %% Creates tuple with one element per Redis slot. Each element maps the Redis slot to its eredis
 %% Pid.
@@ -335,6 +357,7 @@ ets_table_name(ClusterName, Purpose) ->
         ++ "." ++ atom_to_list(?MODULE)).
 
 
+% TODO(nikola) I don't think we need this anymore since we update to eredis from Nordix
 safe_eredis_start_link(Ip, Port, Options) ->
     %% eredis client's gen_server terminates if it is unable to connect with redis. We trap the
     %% exit signal just so ecredis process also does not terminate. Returned error needs to be

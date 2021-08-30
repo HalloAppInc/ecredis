@@ -182,7 +182,7 @@ reload_slots_map(State) ->
     create_eredis_pids_cache(NewState, SlotsMaps),
     NodeList = [SlotsMap#slots_map.node || SlotsMap <- SlotsMaps],
     OldNodeList = State#state.node_list,
-    disconnect_old_nodes(State#state.cluster_name, OldNodeList, NodeList),
+    check_and_disconnect_old_nodes(State#state.cluster_name, OldNodeList, NodeList),
     NewState#state{node_list = NodeList}.
 
 
@@ -253,7 +253,7 @@ connect_node(ClusterName, Node, Options) ->
     lookup_eredis_pid(ClusterName, Node, Options),
     ok.
 
-disconnect_old_nodes(ClusterName, OldNodeList, NewNodeList) ->
+check_and_disconnect_old_nodes(ClusterName, OldNodeList, NewNodeList) ->
     NewNodeSet = sets:from_list(NewNodeList),
     OldNodeSet = sets:from_list(OldNodeList),
     DisconnectNodes = sets:to_list(sets:subtract(OldNodeSet, NewNodeSet)),

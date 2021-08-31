@@ -144,9 +144,9 @@ check_sanity_of_keys([Term1, _Term2 | Rest]) ->
         "memory" ->
             %% duplicate logic similar to get_key_from_command.
             case Rest of
-                [Term3 | _] when is_binary(Term3) -> binary_to_list(Term3);
-                [Term3 | _] when is_list(Term3) -> Term3;
-                _ -> undefined
+                [Term3 | _] when is_binary(Term3) -> [binary_to_list(Term3)];
+                [Term3 | _] when is_list(Term3) -> [Term3];
+                _ -> [undefined]
             end;
         _ ->
             [undefined]
@@ -165,7 +165,7 @@ get_keys_from_rest([NumKeys | Rest]) when is_integer(NumKeys) ->
             end
         end, Keys);
 get_keys_from_rest(_) ->
-    undefined.
+    [undefined].
 
 
 -spec validate_keys([any()]) -> ok | error.

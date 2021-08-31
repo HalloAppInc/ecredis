@@ -56,3 +56,18 @@ eval_command2_test() ->
     ok.
 
 
+memory_command_test() ->
+    Command1 = [
+        ["MEMORY", "USAGE", <<"abc:{1}">>],
+        ["MEMORY", "USAGE", <<"def:{1}">>]
+    ],
+    ?assertEqual(ok, ecredis_command_parser:check_sanity_of_keys(Command1)),
+
+    Command2 = [
+        ["MEMORY", "USAGE", <<"abc:{1}">>],
+        ["MEMORY", "USAGE", <<"def:{2}">>]
+    ],
+    ?assertEqual(error, ecredis_command_parser:check_sanity_of_keys(Command2)),
+    ok.
+
+

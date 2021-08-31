@@ -57,6 +57,12 @@ get_key_from_command([Term1, Term2|Rest]) ->
             undefined;
         "evalsha" ->
             get_key_from_rest(Rest);
+        "memory" ->
+            case Rest of
+                [Term3 | _] when is_binary(Term3) -> binary_to_list(Term3);
+                [Term3 | _] when is_list(Term3) -> Term3;
+                _ -> undefined
+            end;
         _ ->
             Term2
     end;
@@ -135,6 +141,13 @@ check_sanity_of_keys([Term1, _Term2 | Rest]) ->
             get_keys_from_rest(Rest);
         "evalsha" ->
             get_keys_from_rest(Rest);
+        "memory" ->
+            %% duplicate logic similar to get_key_from_command.
+            case Rest of
+                [Term3 | _] when is_binary(Term3) -> binary_to_list(Term3);
+                [Term3 | _] when is_list(Term3) -> Term3;
+                _ -> undefined
+            end;
         _ ->
             [undefined]
     end,

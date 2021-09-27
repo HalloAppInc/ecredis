@@ -322,7 +322,7 @@ execute_query(#query{retries = Retries} = Query) when Retries >= ?REDIS_CLUSTER_
 execute_query(#query{command = Command, retries = Retries, pid = Pid} = Query) ->
     throttle_retries(Retries, Query),
     % run the query in eredis
-    Result = eredis_query(Pid, Command),
+    Result = try_eredis_query(Pid, Command),
     NewQuery = filter_out_asking_result(Query#query{response = Result}),
     case get_successes_and_retries(NewQuery) of
         {_Successes, []} ->
@@ -385,6 +385,10 @@ get_successes_and_retries(#query{response = {error, <<"TRYAGAIN">>}, retries = R
     {[], [Query#query{retries = Retries + 1}]};
 get_successes_and_retries(#query{response = {error, no_connection}} = Query) ->
     handle_error(no_connection, Query);
+get_successes_and_retries(#query{response = {error, timeout}} = Query) ->
+    handle_error(timeout, Query);
+get_successes_and_retries(#query{response = {error, unknown_error}} = Query) ->
+    handle_error(unknown_error, Query);
 get_successes_and_retries(#query{response = {error, <<"CLUSTERDOWN Hash slot not served">>}} = Query) ->
     handle_error(cluster_down, Query);
 get_successes_and_retries(#query{response = {error, _}, retries = Retries} = Query) ->
@@ -576,6 +580,18 @@ group_by_destination(#query{command = Command,
             maps:put(Pid, NewQuery, GroupedCommands)
     end.
 
+
+try_eredis_query(Pid, Command) ->
+    try
+        eredis_query(Pid, Command)
+    catch
+        exit : {timeout, St} ->
+            ?ERROR("eredis genserver timeout Pid: ~p Commands: ~p ~p", [Pid, Command, St]),
+            {error, timeout};
+        Class : Reason : St ->
+            ?ERROR("Unknown Error ~p:~p ~p", [Class, Reason, lager:pr_stacktrace(St, {Class, Reason})]),
+            {error, unknown_error}
+    end.
 
 %% @doc Send the command to the given redis node 
 -spec eredis_query(pid(), redis_command()) -> redis_result().

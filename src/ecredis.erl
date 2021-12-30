@@ -127,6 +127,8 @@ q(ClusterName, Command) ->
 
 
 -spec qp(ClusterName :: atom(), Commands :: redis_pipeline_command()) -> redis_pipeline_result().
+qp(_ClusterName, []) ->
+    [];
 qp(ClusterName, Commands) ->
     Query = #query{
         query_type = qp,

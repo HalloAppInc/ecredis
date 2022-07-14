@@ -334,7 +334,7 @@ execute_query(#query{command = Command, retries = Retries, pid = Pid} = Query) -
             case check_sanity_of_keys(NewQuery) of
                 ok ->
                     % Reexecute all queries that failed
-                    [ecredis_logger:log_warning("Retrying query: ", Q) || Q <- QueriesToResend],
+                    [?INFO("Retrying query: ~p", [Q]) || Q <- QueriesToResend],
                     NewSuccesses = [execute_query(Q) || Q <- QueriesToResend],
                     % Put the original successes and new successes back in order.
                     % The merging logic is primarily intended for qmn, as qp redirects
@@ -470,7 +470,7 @@ get_successes_and_retries(#query{
 handle_moved(#query{retries = Retries} = Query, Dest) ->
     % The command was sent to the wrong node - refresh the mapping, update
     % the query to reflect the new pid, and add the query to the retries list
-    ecredis_logger:log_warning("MOVED", Query),
+    ?INFO("MOVED: ~p", [Query]),
     case handle_redirect(Query, moved, Dest) of
         {ok, Slot, Pid, NewVersion} ->
             {[], [Query#query{
